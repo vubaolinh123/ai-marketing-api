@@ -14,7 +14,7 @@ const { AISettings } = require('../models');
  */
 exports.generateArticle = async (req, res) => {
     try {
-        const { mode, topic, purpose, description, wordCount = 250, imageUrl, useBrandSettings } = req.body;
+        const { mode, topic, purpose, description, wordCount = 250, imageUrl, imageUrls, useBrandSettings } = req.body;
 
         // Validate required fields
         if (!topic || !purpose || !description) {
@@ -36,21 +36,42 @@ exports.generateArticle = async (req, res) => {
 
         let result;
 
-        if (mode === 'manual' && imageUrl) {
+        const normalizedImageUrls = Array.isArray(imageUrls) && imageUrls.length > 0
+            ? imageUrls.filter(Boolean)
+            : imageUrl
+                ? [imageUrl]
+                : [];
+
+        if (mode === 'manual' && normalizedImageUrls.length > 0) {
             // Manual mode with uploaded image
             result = await geminiService.generateArticleWithImage({
                 topic,
                 purpose,
                 description,
                 wordCount,
-                imagePath: imageUrl,
+                imagePath: normalizedImageUrls[0],
                 brandContext,
                 modelName: textModel
             });
             // Keep the user's uploaded image
-            result.imageUrl = imageUrl;
+            result.imageUrl = normalizedImageUrls[0];
+            result.imageUrls = normalizedImageUrls;
+        } else if (mode === 'ai_image' && normalizedImageUrls.length > 0) {
+            // AI Image mode with pre-generated image
+            result = await geminiService.generateArticleWithImage({
+                topic,
+                purpose,
+                description,
+                wordCount,
+                imagePath: normalizedImageUrls[0],
+                brandContext,
+                modelName: textModel
+            });
+            // Keep pre-generated image URL
+            result.imageUrl = normalizedImageUrls[0];
+            result.imageUrls = normalizedImageUrls;
         } else if (mode === 'ai_image') {
-            // AI Image mode - generate content and image
+            // AI Image mode - fallback to old behavior
             result = await geminiService.generateArticleWithAIImage({
                 topic,
                 purpose,
@@ -79,6 +100,7 @@ exports.generateArticle = async (req, res) => {
                 content: result.content,
                 hashtags: result.hashtags || [],
                 imageUrl: result.imageUrl || null,
+                imageUrls: result.imageUrls || (result.imageUrl ? [result.imageUrl] : []),
                 imagePrompt: result.imagePrompt || null
             }
         });
@@ -97,7 +119,7 @@ exports.generateArticle = async (req, res) => {
  */
 exports.generateAndSaveArticle = async (req, res) => {
     try {
-        const { mode, topic, purpose, description, wordCount = 250, imageUrl, useBrandSettings } = req.body;
+        const { mode, topic, purpose, description, wordCount = 250, imageUrl, imageUrls, useBrandSettings } = req.body;
 
         // Validate required fields
         if (!topic || !purpose || !description) {
@@ -119,17 +141,36 @@ exports.generateAndSaveArticle = async (req, res) => {
 
         let result;
 
-        if (mode === 'manual' && imageUrl) {
+        const normalizedImageUrls = Array.isArray(imageUrls) && imageUrls.length > 0
+            ? imageUrls.filter(Boolean)
+            : imageUrl
+                ? [imageUrl]
+                : [];
+
+        if (mode === 'manual' && normalizedImageUrls.length > 0) {
             result = await geminiService.generateArticleWithImage({
                 topic,
                 purpose,
                 description,
                 wordCount,
-                imagePath: imageUrl,
+                imagePath: normalizedImageUrls[0],
                 brandContext,
                 modelName: textModel
             });
-            result.imageUrl = imageUrl;
+            result.imageUrl = normalizedImageUrls[0];
+            result.imageUrls = normalizedImageUrls;
+        } else if (mode === 'ai_image' && normalizedImageUrls.length > 0) {
+            result = await geminiService.generateArticleWithImage({
+                topic,
+                purpose,
+                description,
+                wordCount,
+                imagePath: normalizedImageUrls[0],
+                brandContext,
+                modelName: textModel
+            });
+            result.imageUrl = normalizedImageUrls[0];
+            result.imageUrls = normalizedImageUrls;
         } else if (mode === 'ai_image') {
             result = await geminiService.generateArticleWithAIImage({
                 topic,
@@ -158,6 +199,7 @@ exports.generateAndSaveArticle = async (req, res) => {
             topic,
             purpose,
             imageUrl: result.imageUrl || null,
+            imageUrls: result.imageUrls || (result.imageUrl ? [result.imageUrl] : []),
             hashtags: result.hashtags || [],
             status: 'draft'
         });
@@ -172,6 +214,7 @@ exports.generateAndSaveArticle = async (req, res) => {
                     content: result.content,
                     hashtags: result.hashtags,
                     imageUrl: result.imageUrl,
+                    imageUrls: result.imageUrls || (result.imageUrl ? [result.imageUrl] : []),
                     imagePrompt: result.imagePrompt
                 }
             }

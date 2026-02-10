@@ -20,7 +20,8 @@ const articleSchema = new mongoose.Schema({
     topic: {
         type: String,
         required: [true, 'Chủ đề là bắt buộc'],
-        enum: ['marketing', 'social_media', 'ecommerce', 'branding', 'content', 'seo', 'product', 'event']
+        trim: true,
+        maxlength: [200, 'Chủ đề không được quá 200 ký tự']
     },
     purpose: {
         type: String,
@@ -31,6 +32,10 @@ const articleSchema = new mongoose.Schema({
         type: String,
         trim: true
     },
+    imageUrls: [{
+        type: String,
+        trim: true
+    }],
     hashtags: [{
         type: String,
         trim: true

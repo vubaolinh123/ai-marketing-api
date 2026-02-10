@@ -5,6 +5,29 @@
 
 const mongoose = require('mongoose');
 
+const CAMERA_ANGLES = ['wide', 'medium', 'closeup', 'topdown', 'detail'];
+
+const GeneratedImageSchema = new mongoose.Schema({
+    angle: {
+        type: String,
+        enum: CAMERA_ANGLES,
+        required: true
+    },
+    imageUrl: {
+        type: String,
+        default: ''
+    },
+    status: {
+        type: String,
+        enum: ['processing', 'completed', 'failed'],
+        default: 'processing'
+    },
+    errorMessage: {
+        type: String,
+        default: ''
+    }
+}, { _id: false });
+
 const ProductImageSchema = new mongoose.Schema({
     // Owner - only this user can access
     userId: {
@@ -31,6 +54,19 @@ const ProductImageSchema = new mongoose.Schema({
     generatedImageUrl: {
         type: String,
         default: ''
+    },
+
+    // Multi-angle generation settings and results
+    cameraAngles: {
+        type: [{
+            type: String,
+            enum: CAMERA_ANGLES
+        }],
+        default: ['wide']
+    },
+    generatedImages: {
+        type: [GeneratedImageSchema],
+        default: []
     },
     
     // Background settings

@@ -9,6 +9,32 @@ const geminiService = require('../services/gemini');
 const path = require('path');
 const { deleteFilesFromPaths } = require('../utils/fileCleanup');
 
+function normalizeCameraAngles(cameraAngles) {
+    const supportedAngles = ['wide', 'medium', 'closeup', 'topdown', 'detail'];
+    const inputAngles = Array.isArray(cameraAngles) && cameraAngles.length > 0
+        ? cameraAngles
+        : ['wide'];
+
+    const normalized = [];
+    for (const angle of inputAngles) {
+        if (!supportedAngles.includes(angle)) continue;
+        if (!normalized.includes(angle)) {
+            normalized.push(angle);
+        }
+    }
+
+    return normalized.length > 0 ? normalized : ['wide'];
+}
+
+function mapStatusFromGeneratedImages(generatedImages) {
+    const hasSuccess = generatedImages.some(item => item.status === 'completed' && item.imageUrl);
+    const hasFailure = generatedImages.some(item => item.status === 'failed');
+
+    if (!hasSuccess) return 'failed';
+    if (hasFailure) return 'failed';
+    return 'completed';
+}
+
 /**
  * Generate product image with AI
  * POST /api/product-images/generate
@@ -18,6 +44,7 @@ exports.generateProductImage = async (req, res) => {
         const {
             originalImageUrl,
             backgroundType,
+            cameraAngles,
             customBackground,
             useLogo,
             logoPosition,
@@ -35,12 +62,21 @@ exports.generateProductImage = async (req, res) => {
             });
         }
 
+        const normalizedAngles = normalizeCameraAngles(cameraAngles);
+
         // Create initial record with processing status
         const productImage = await ProductImage.create({
             userId: req.user._id,
             title: title || 'Ảnh sản phẩm ' + new Date().toLocaleDateString('vi-VN'),
             originalImageUrl,
             backgroundType: backgroundType || 'studio',
+            cameraAngles: normalizedAngles,
+            generatedImages: normalizedAngles.map((angle) => ({
+                angle,
+                imageUrl: '',
+                status: 'processing',
+                errorMessage: ''
+            })),
             customBackground: customBackground || '',
             useLogo: useLogo !== false,
             logoPosition: logoPosition || 'bottom-right',
@@ -67,9 +103,10 @@ exports.generateProductImage = async (req, res) => {
 
         try {
             // Generate the image
-            const generatedImageUrl = await geminiService.productImageService.generateProductWithBackground({
+            const generatedImages = await geminiService.productImageService.generateProductWithBackground({
                 originalImagePath,
                 backgroundType: backgroundType || 'studio',
+                cameraAngles: normalizedAngles,
                 customBackground,
                 useLogo: useLogo !== false,
                 logoPosition: logoPosition || 'bottom-right',
@@ -80,8 +117,11 @@ exports.generateProductImage = async (req, res) => {
             });
 
             // Update record with result
-            productImage.generatedImageUrl = generatedImageUrl;
-            productImage.status = 'completed';
+            productImage.generatedImages = generatedImages;
+            productImage.generatedImageUrl = generatedImages.find(item => item.status === 'completed' && item.imageUrl)?.imageUrl || '';
+            productImage.status = mapStatusFromGeneratedImages(generatedImages);
+            const firstError = generatedImages.find(item => item.status === 'failed' && item.errorMessage)?.errorMessage;
+            productImage.errorMessage = firstError || '';
             await productImage.save();
 
             res.status(201).json({
@@ -142,24 +182,39 @@ exports.regenerateProductImage = async (req, res) => {
         // Get full path to original image
         const originalImagePath = geminiService.productImageService.getFilePathFromUrl(originalImage.originalImageUrl);
 
-        // Delete old generated image before regenerating (to save storage)
-        const oldGeneratedUrl = originalImage.generatedImageUrl;
-        if (oldGeneratedUrl) {
-            const { deleteFileFromPath } = require('../utils/fileCleanup');
-            await deleteFileFromPath(oldGeneratedUrl);
-            console.log('Deleted old generated image:', oldGeneratedUrl);
+        // Delete old generated image(s) before regenerating (to save storage)
+        const oldGeneratedUrls = [
+            originalImage.generatedImageUrl,
+            ...(Array.isArray(originalImage.generatedImages)
+                ? originalImage.generatedImages.map((item) => item.imageUrl)
+                : [])
+        ].filter(Boolean);
+
+        if (oldGeneratedUrls.length > 0) {
+            const { deleteFilesFromPaths } = require('../utils/fileCleanup');
+            await deleteFilesFromPaths(oldGeneratedUrls);
+            console.log('Deleted old generated images:', oldGeneratedUrls.length);
         }
 
         // Update status to processing
         originalImage.status = 'processing';
         originalImage.errorMessage = '';
+        const normalizedAngles = normalizeCameraAngles(originalImage.cameraAngles);
+        originalImage.cameraAngles = normalizedAngles;
+        originalImage.generatedImages = normalizedAngles.map((angle) => ({
+            angle,
+            imageUrl: '',
+            status: 'processing',
+            errorMessage: ''
+        }));
         await originalImage.save();
 
         try {
             // Regenerate the image
-            const generatedImageUrl = await geminiService.productImageService.generateProductWithBackground({
+            const generatedImages = await geminiService.productImageService.generateProductWithBackground({
                 originalImagePath,
                 backgroundType: originalImage.backgroundType,
+                cameraAngles: normalizedAngles,
                 customBackground: originalImage.customBackground,
                 useLogo: originalImage.useLogo,
                 logoPosition: originalImage.logoPosition,
@@ -170,8 +225,11 @@ exports.regenerateProductImage = async (req, res) => {
             });
 
             // Update record with new result
-            originalImage.generatedImageUrl = generatedImageUrl;
-            originalImage.status = 'completed';
+            originalImage.generatedImages = generatedImages;
+            originalImage.generatedImageUrl = generatedImages.find(item => item.status === 'completed' && item.imageUrl)?.imageUrl || '';
+            originalImage.status = mapStatusFromGeneratedImages(generatedImages);
+            const firstError = generatedImages.find(item => item.status === 'failed' && item.errorMessage)?.errorMessage;
+            originalImage.errorMessage = firstError || '';
             await originalImage.save();
 
             res.status(200).json({
@@ -303,7 +361,13 @@ exports.deleteProductImage = async (req, res) => {
         }
 
         // Delete associated image files from disk
-        const imagePaths = [image.originalImageUrl, image.generatedImageUrl].filter(Boolean);
+        const imagePaths = [
+            image.originalImageUrl,
+            image.generatedImageUrl,
+            ...(Array.isArray(image.generatedImages)
+                ? image.generatedImages.map((item) => item.imageUrl)
+                : [])
+        ].filter(Boolean);
         const fileResult = await deleteFilesFromPaths(imagePaths);
 
         res.status(200).json({

@@ -7,7 +7,13 @@ const { deleteFileFromPath } = require('../utils/fileCleanup');
  */
 exports.createArticle = async (req, res) => {
     try {
-        const { title, content, topic, purpose, imageUrl, hashtags, status } = req.body;
+        const { title, content, topic, purpose, imageUrl, imageUrls, hashtags, status } = req.body;
+
+        const normalizedImageUrls = Array.isArray(imageUrls) && imageUrls.length > 0
+            ? imageUrls.filter(Boolean)
+            : imageUrl
+                ? [imageUrl]
+                : [];
 
         const article = await Article.create({
             userId: req.user._id,
@@ -15,7 +21,8 @@ exports.createArticle = async (req, res) => {
             content,
             topic,
             purpose,
-            imageUrl,
+            imageUrl: imageUrl || normalizedImageUrls[0],
+            imageUrls: normalizedImageUrls,
             hashtags: hashtags || [],
             status: status || 'draft'
         });
@@ -130,7 +137,13 @@ exports.getArticle = async (req, res) => {
  */
 exports.updateArticle = async (req, res) => {
     try {
-        const { title, content, topic, purpose, imageUrl, hashtags, status } = req.body;
+        const { title, content, topic, purpose, imageUrl, imageUrls, hashtags, status } = req.body;
+
+        const normalizedImageUrls = Array.isArray(imageUrls) && imageUrls.length > 0
+            ? imageUrls.filter(Boolean)
+            : imageUrl
+                ? [imageUrl]
+                : [];
 
         const article = await Article.findOneAndUpdate(
             { _id: req.params.id, userId: req.user._id },
@@ -139,7 +152,8 @@ exports.updateArticle = async (req, res) => {
                 content,
                 topic,
                 purpose,
-                imageUrl,
+                imageUrl: imageUrl || normalizedImageUrls[0],
+                imageUrls: normalizedImageUrls,
                 hashtags,
                 status
             },
@@ -185,12 +199,17 @@ exports.deleteArticle = async (req, res) => {
             });
         }
 
-        // Delete associated image file from disk
+        // Delete associated image file(s) from disk
         let filesNotFound = [];
-        if (article.imageUrl) {
-            const result = await deleteFileFromPath(article.imageUrl);
+        const imagePaths = Array.from(new Set([
+            article.imageUrl,
+            ...(Array.isArray(article.imageUrls) ? article.imageUrls : [])
+        ].filter(Boolean)));
+
+        for (const imagePath of imagePaths) {
+            const result = await deleteFileFromPath(imagePath);
             if (result.notFound) {
-                filesNotFound.push(article.imageUrl);
+                filesNotFound.push(imagePath);
             }
         }
 
@@ -199,7 +218,7 @@ exports.deleteArticle = async (req, res) => {
             message: filesNotFound.length > 0 
                 ? 'Xóa bài viết thành công (không tìm thấy ảnh để xóa)' 
                 : 'Xóa bài viết thành công',
-            filesDeleted: article.imageUrl && filesNotFound.length === 0 ? 1 : 0,
+            filesDeleted: Math.max(0, imagePaths.length - filesNotFound.length),
             filesNotFound
         });
     } catch (error) {

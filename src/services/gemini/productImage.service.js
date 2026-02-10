@@ -50,6 +50,224 @@ const OUTPUT_SIZES = {
     '3:4': { width: 960, height: 1280, label: 'portrait 3:4' }
 };
 
+const CAMERA_ANGLES = ['wide', 'medium', 'closeup', 'topdown', 'detail'];
+
+const CAMERA_ANGLE_PROMPTS = {
+    wide: 'wide shot, full composition, product and surrounding context clearly visible',
+    medium: 'medium shot, balanced framing between product and context',
+    closeup: 'close-up shot, product dominates frame while keeping contextual cues',
+    topdown: 'top-down / flat-lay perspective with clear product arrangement',
+    detail: 'macro detail shot, emphasize premium texture, material, and craftsmanship details'
+};
+
+function normalizeCameraAngles(cameraAngles) {
+    const input = Array.isArray(cameraAngles) && cameraAngles.length > 0
+        ? cameraAngles
+        : ['wide'];
+
+    const normalized = [];
+    for (const angle of input) {
+        if (!CAMERA_ANGLES.includes(angle)) continue;
+        if (!normalized.includes(angle)) {
+            normalized.push(angle);
+        }
+    }
+
+    return normalized.length > 0 ? normalized : ['wide'];
+}
+
+function getMimeTypeFromPath(filePath) {
+    const ext = path.extname(filePath || '').toLowerCase();
+    if (ext === '.png') return 'image/png';
+    if (ext === '.webp') return 'image/webp';
+    return 'image/jpeg';
+}
+
+function toInlineDataPart(filePath) {
+    if (!filePath || !fs.existsSync(filePath)) {
+        return null;
+    }
+
+    const imageBuffer = fs.readFileSync(filePath);
+    return {
+        inlineData: {
+            mimeType: getMimeTypeFromPath(filePath),
+            data: imageBuffer.toString('base64')
+        }
+    };
+}
+
+function buildIdentityAnchor(productAnalysis = {}) {
+    const colors = Array.isArray(productAnalysis.colors) && productAnalysis.colors.length > 0
+        ? productAnalysis.colors.join(', ')
+        : 'match the exact colors from original image';
+
+    const keyFeatures = Array.isArray(productAnalysis.features) && productAnalysis.features.length > 0
+        ? productAnalysis.features.slice(0, 6).join('; ')
+        : 'preserve all distinctive visual features from original image';
+
+    return [
+        `Product type: ${productAnalysis.productType || productAnalysis.category || 'same product as reference'}`,
+        `Shape: ${productAnalysis.shape || 'same silhouette and proportions as reference image'}`,
+        `Material/texture: ${productAnalysis.material || ''} ${productAnalysis.texture || ''}`.trim() || 'same material and texture as reference image',
+        `Colors: ${colors}`,
+        `Patterns/marks: ${productAnalysis.patterns || productAnalysis.brandElements || 'no changes to logos/marks/details'}`,
+        `Must-keep features: ${keyFeatures}`,
+        'Identity lock rule: Keep product identity and scene continuity at 80-90% similarity across all angle outputs.',
+        'Allowed variation rule: Only camera viewpoint/framing may vary (10-20% max).'
+    ].join('\n');
+}
+
+async function buildConsistentSceneBlueprint(params) {
+    const { productAnalysis, backgroundType, customBackground, additionalNotes, brandContext } = params;
+    const backgroundDesc = BACKGROUND_DESCRIPTIONS[backgroundType] || BACKGROUND_DESCRIPTIONS.studio;
+    const model = getModel('TEXT');
+
+    const prompt = `You are a senior art director for product photography consistency.
+
+Your task: create ONE immutable scene blueprint for a multi-angle image set.
+All outputs must look like the same product in the same scene, where only camera angle changes.
+
+CONSTRAINTS:
+- Similarity target across the whole set: 80-90%
+- Allowed variation: 10-20% only (camera viewpoint/framing)
+- Do NOT change product identity, materials, colors, props, or scene style between angles.
+
+INPUT: PRODUCT ANALYSIS
+${JSON.stringify(productAnalysis, null, 2)}
+
+INPUT: BACKGROUND TYPE
+- Type: ${backgroundType}
+- Description: ${backgroundDesc}
+
+INPUT: CUSTOM BACKGROUND
+${customBackground || '(none)'}
+
+INPUT: ADDITIONAL NOTES
+${additionalNotes || '(none)'}
+
+INPUT: BRAND CONTEXT
+${brandContext || '(none)'}
+
+Return STRICT JSON only:
+{
+  "sceneBlueprint": "120-180 words describing immutable scene setting and props",
+  "lightingBlueprint": "specific lighting setup that must stay consistent",
+  "compositionBlueprint": "composition constraints that stay consistent across angles",
+  "hardNegativeRules": ["rule1", "rule2", "rule3", "rule4", "rule5"]
+}`;
+
+    try {
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+        const parsed = parseJsonResponse(text);
+
+        if (parsed && parsed.sceneBlueprint) {
+            return {
+                sceneBlueprint: parsed.sceneBlueprint,
+                lightingBlueprint: parsed.lightingBlueprint || 'soft realistic commercial lighting, consistent across all angles',
+                compositionBlueprint: parsed.compositionBlueprint || 'same scene structure and relative product placement across all angles',
+                hardNegativeRules: Array.isArray(parsed.hardNegativeRules) && parsed.hardNegativeRules.length > 0
+                    ? parsed.hardNegativeRules
+                    : [
+                        'Do not alter product color/material/logo',
+                        'Do not add/remove accessories or ingredients',
+                        'Do not switch to a different product variant',
+                        'Do not change scene style or color grading',
+                        'No text, watermark, or additional branding'
+                    ]
+            };
+        }
+    } catch (error) {
+        console.error('buildConsistentSceneBlueprint error:', error);
+    }
+
+    // Fallback deterministic blueprint
+    return {
+        sceneBlueprint: `Create one consistent ${backgroundType} product scene (${backgroundDesc}). Keep the same product setup, props, and environment style for every angle in the set. ${customBackground || ''}`.trim(),
+        lightingBlueprint: 'Use consistent professional photorealistic lighting, shadow softness, and white balance across all angle outputs.',
+        compositionBlueprint: 'Keep product scale, relative position to background elements, and overall styling consistent across outputs. Only camera viewpoint and crop can change.',
+        hardNegativeRules: [
+            'Do not alter product identity, shape, texture, or color',
+            'Do not add/remove core scene elements between angles',
+            'Do not switch to another product or ingredient',
+            'Do not apply different stylistic filters per angle',
+            'No text overlays, logos generated by AI, or watermark'
+        ]
+    };
+}
+
+function buildConsistentAnglePrompt(params) {
+    const {
+        identityAnchor,
+        sceneBlueprint,
+        cameraAngle,
+        outputSize,
+        additionalNotes,
+        isAnchor,
+        hasCanonicalRef,
+        hasPreviousRef,
+        retryLevel
+    } = params;
+
+    const sizeInfo = OUTPUT_SIZES[outputSize] || OUTPUT_SIZES['1:1'];
+    const angleDescription = CAMERA_ANGLE_PROMPTS[cameraAngle] || CAMERA_ANGLE_PROMPTS.wide;
+
+    const attachedReferences = [
+        '- Image #1: ORIGINAL PRODUCT (highest priority identity lock)',
+        hasCanonicalRef ? '- Image #2: CANONICAL ANCHOR IMAGE (second priority scene lock)' : null,
+        hasPreviousRef ? '- Image #3: PREVIOUS ANGLE IMAGE (continuity support)' : null,
+    ].filter(Boolean).join('\n');
+
+    const retryInstruction = retryLevel > 0
+        ? `\n### RETRY MODE (attempt ${retryLevel + 1})\nBe extra strict about identity continuity. Reduce any style drift. Keep all immutable attributes exactly consistent with references.`
+        : '';
+
+    const anchorInstruction = isAnchor
+        ? 'You are generating the canonical anchor image for this batch. This image will be used as the visual baseline for all other angles.'
+        : 'You are generating a non-anchor angle. Match canonical and original references as closely as possible while changing only viewpoint.';
+
+    const negativeRules = (sceneBlueprint.hardNegativeRules || []).map((rule, index) => `${index + 1}. ${rule}`).join('\n');
+
+    return `## MULTI-ANGLE PRODUCT IMAGE GENERATION (CONSISTENCY MODE)
+
+### GOAL
+Generate one image that belongs to the same angle set with high consistency.
+- Similarity target with sibling images: 80-90%
+- Allowed variation: 10-20% ONLY (camera viewpoint/framing)
+
+### ATTACHED REFERENCE ORDER
+${attachedReferences}
+
+### ROLE
+${anchorInstruction}
+
+### IMMUTABLE PRODUCT IDENTITY
+${identityAnchor}
+
+### IMMUTABLE SCENE BLUEPRINT
+- Scene: ${sceneBlueprint.sceneBlueprint}
+- Lighting: ${sceneBlueprint.lightingBlueprint}
+- Composition: ${sceneBlueprint.compositionBlueprint}
+
+### ANGLE DELTA (ONLY THIS MAY CHANGE)
+- Target camera angle: ${cameraAngle}
+- Framing guidance: ${angleDescription}
+
+### HARD NEGATIVE RULES
+${negativeRules}
+
+### TECHNICAL REQUIREMENTS
+- Aspect ratio: ${sizeInfo.label} (${sizeInfo.width}x${sizeInfo.height})
+- Style: Photorealistic professional commercial photography
+- Keep natural and coherent shadows with unchanged scene context
+- No text, no watermark, no AI-invented branding
+
+### OPTIONAL USER NOTES
+${additionalNotes || '(none)'}
+${retryInstruction}`;
+}
+
 /**
  * Analyze product image using Gemini Vision
  * @param {string} imagePath - Path to the product image
@@ -168,11 +386,12 @@ Only return valid JSON.`;
  * @returns {Promise<string>} AI-generated merged scene description
  */
 async function buildMergedScenePrompt(params) {
-    const { productAnalysis, backgroundType, customBackground, outputSize, additionalNotes, brandContext } = params;
+    const { productAnalysis, backgroundType, cameraAngle, customBackground, outputSize, additionalNotes, brandContext } = params;
     
     const model = getModel('TEXT');
     const sizeInfo = OUTPUT_SIZES[outputSize] || OUTPUT_SIZES['1:1'];
     const backgroundDesc = BACKGROUND_DESCRIPTIONS[backgroundType] || '';
+    const angleDescription = CAMERA_ANGLE_PROMPTS[cameraAngle] || CAMERA_ANGLE_PROMPTS.wide;
     
     // Build the context merging prompt
     const mergePrompt = `You are a professional creative director for product photography. Your task is to CREATE A DETAILED SCENE DESCRIPTION that merges all the following inputs into ONE cohesive, specific prompt for an AI image generator.
@@ -192,6 +411,9 @@ ${additionalNotes || '(No additional details)'}
 
 ## INPUT 5: BRAND CONTEXT (business type, style)
 ${brandContext || '(No brand context provided)'}
+
+## INPUT 6: CAMERA ANGLE / FRAMING
+${cameraAngle || 'wide'} - ${angleDescription}
 
 ---
 
@@ -213,6 +435,7 @@ Create a SINGLE, DETAILED scene description that:
    - WHAT they are doing with the product
    - WHERE the scene takes place (specific setting details)
    - HOW the product looks (must match original but in new context)
+   - CAMERA FRAMING based on requested angle (${cameraAngle || 'wide'})
    - LIGHTING and MOOD
 
 ## OUTPUT FORMAT
@@ -236,6 +459,7 @@ ${mergedScene}
 
 ### TECHNICAL REQUIREMENTS
 - Aspect ratio: ${sizeInfo.label} (${sizeInfo.width}x${sizeInfo.height})
+- Camera angle: ${cameraAngle || 'wide'} (${angleDescription})
 - Style: Photorealistic, professional photography quality
 - Resolution: High quality, sharp details
 - NO text, logo, or watermark overlays
@@ -259,15 +483,17 @@ ${mergedScene}
  * Fallback simple prompt builder (used if AI merge fails)
  */
 function buildSimplePrompt(params) {
-    const { productAnalysis, backgroundType, outputSize } = params;
+    const { productAnalysis, backgroundType, cameraAngle, outputSize } = params;
     const sizeInfo = OUTPUT_SIZES[outputSize] || OUTPUT_SIZES['1:1'];
     const backgroundDesc = BACKGROUND_DESCRIPTIONS[backgroundType] || BACKGROUND_DESCRIPTIONS['studio'];
+    const angleDescription = CAMERA_ANGLE_PROMPTS[cameraAngle] || CAMERA_ANGLE_PROMPTS.wide;
     
     return `Create a professional product photo.
 
 PRODUCT: ${productAnalysis.summary || productAnalysis.productType || 'A product'}
 BACKGROUND: ${backgroundDesc}
 ASPECT RATIO: ${sizeInfo.label}
+CAMERA ANGLE: ${cameraAngle || 'wide'} (${angleDescription})
 
 Keep the product exactly as shown in the reference image. Only change the background.
 NO logo or text overlays.`;
@@ -414,121 +640,218 @@ async function overlayLogo(imagePath, logoPath, position, outputSize) {
 }
 
 /**
- * Generate product image with background and logo
- * Uses 3-step AI pipeline:
- * 1. Analyze product image
- * 2. AI merges product analysis + context + brand settings into unified scene
- * 3. Generate image with merged prompt
- * 
+ * Generate single product image for one camera angle with consistency references
  * @param {Object} params - Generation parameters
  * @returns {Promise<string>} URL path to generated image
  */
-async function generateProductWithBackground(params) {
-    const { originalImagePath, backgroundType, customBackground, useLogo, logoPosition, logoUrl, outputSize, additionalNotes, brandContext } = params;
-    
-    try {
-        // ============================================
-        // STEP 1: Analyze the product image
-        // ============================================
-        console.log('=== STEP 1: Analyzing product image ===');
-        const productAnalysis = await analyzeProductImage(originalImagePath);
-        console.log('Product analysis complete:', productAnalysis.productType);
-        console.log('Product summary:', productAnalysis.summary?.substring(0, 200) + '...');
-        
-        // ============================================
-        // STEP 2: AI merges all contexts into one scene description
-        // ============================================
-        console.log('=== STEP 2: AI merging contexts into unified scene ===');
-        const mergedPrompt = await buildMergedScenePrompt({
-            productAnalysis,
-            backgroundType,
-            customBackground,
-            outputSize,
-            additionalNotes,
-            brandContext
-        });
-        console.log('Merged prompt ready (first 300 chars):', mergedPrompt.substring(0, 300) + '...');
-        
-        // ============================================
-        // STEP 3: Generate the image using Gemini
-        // ============================================
-        console.log('=== STEP 3: Generating image with merged prompt ===');
-        const imageModel = genAI.getGenerativeModel({
-            model: MODELS.IMAGE_GEN,
-            generationConfig: {
-                responseModalities: ['TEXT', 'IMAGE']
-            }
-        });
-        
-        // Read original image for reference
-        const originalImageBuffer = fs.readFileSync(originalImagePath);
-        const originalBase64 = originalImageBuffer.toString('base64');
-        const originalMimeType = originalImagePath.endsWith('.png') ? 'image/png' : 'image/jpeg';
-        
-        // Final prompt with reference image instruction
-        const finalPrompt = `${mergedPrompt}
+async function generateSingleAngleImage(params) {
+    const {
+        originalImagePath,
+        canonicalImagePath,
+        previousAngleImagePath,
+        identityAnchor,
+        sceneBlueprint,
+        cameraAngle,
+        useLogo,
+        logoPosition,
+        logoUrl,
+        outputSize,
+        additionalNotes,
+        isAnchor = false,
+        retryLevel = 0
+    } = params;
 
-### REFERENCE IMAGE
-The attached image shows the ORIGINAL product. Your generated image must feature this EXACT product (same colors, textures, proportions, distinctive features) transformed into the scene described above.`;
+    console.log(`=== Generating image for angle [${cameraAngle}] | retry=${retryLevel} ===`);
 
-        const result = await imageModel.generateContent([
-            finalPrompt,
-            {
-                inlineData: {
-                    mimeType: originalMimeType,
-                    data: originalBase64
-                }
-            }
-        ]);
-        
-        const response = result.response;
-        
-        // Check for image in response
-        if (response.candidates && response.candidates[0]?.content?.parts) {
-            for (const part of response.candidates[0].content.parts) {
-                if (part.inlineData && part.inlineData.mimeType?.startsWith('image/')) {
-                    const imageData = part.inlineData.data;
-                    const mimeType = part.inlineData.mimeType;
-                    
-                    // Determine file extension
-                    const ext = mimeType === 'image/png' ? 'png' : 
-                               mimeType === 'image/webp' ? 'webp' : 'jpg';
-                    
-                    // Save image to disk
-                    const filename = `${uuidv4()}.${ext}`;
-                    const filePath = path.join(PRODUCT_IMAGES_DIR, filename);
-                    
-                    const imageBuffer = Buffer.from(imageData, 'base64');
-                    fs.writeFileSync(filePath, imageBuffer);
-                    
-                    console.log('Step 3: Image generated and saved:', filePath);
-                    
-                    let finalImageUrl = `/uploads/images/product-images/${filename}`;
-                    
-                    // Step 4: Overlay logo if enabled
-                    if (useLogo && logoUrl && logoPosition !== 'none') {
-                        console.log('Step 4: Overlaying logo...');
-                        const logoPath = await downloadLogo(logoUrl);
-                        if (logoPath) {
-                            finalImageUrl = await overlayLogo(filePath, logoPath, logoPosition, outputSize);
-                            
-                            // Clean up the non-logo version if a new file was created
-                            if (finalImageUrl !== `/uploads/images/product-images/${filename}`) {
-                                try {
-                                    fs.unlinkSync(filePath);
-                                } catch (e) {
-                                    // Ignore cleanup errors
-                                }
+    const imageModel = genAI.getGenerativeModel({
+        model: MODELS.IMAGE_GEN,
+        generationConfig: {
+            responseModalities: ['TEXT', 'IMAGE']
+        }
+    });
+
+    const prompt = buildConsistentAnglePrompt({
+        identityAnchor,
+        sceneBlueprint,
+        cameraAngle,
+        outputSize,
+        additionalNotes,
+        isAnchor,
+        hasCanonicalRef: !!canonicalImagePath,
+        hasPreviousRef: !!previousAngleImagePath,
+        retryLevel
+    });
+
+    const originalPart = toInlineDataPart(originalImagePath);
+    const canonicalPart = toInlineDataPart(canonicalImagePath);
+    const previousPart = toInlineDataPart(previousAngleImagePath);
+
+    const requestPayload = [
+        prompt,
+        originalPart,
+        canonicalPart,
+        previousPart
+    ].filter(Boolean);
+
+    const result = await imageModel.generateContent(requestPayload);
+    const response = result.response;
+
+    // Check for image in response
+    if (response.candidates && response.candidates[0]?.content?.parts) {
+        for (const part of response.candidates[0].content.parts) {
+            if (part.inlineData && part.inlineData.mimeType?.startsWith('image/')) {
+                const imageData = part.inlineData.data;
+                const mimeType = part.inlineData.mimeType;
+
+                // Determine file extension
+                const ext = mimeType === 'image/png' ? 'png' :
+                    mimeType === 'image/webp' ? 'webp' : 'jpg';
+
+                // Save image to disk
+                const filename = `${uuidv4()}.${ext}`;
+                const filePath = path.join(PRODUCT_IMAGES_DIR, filename);
+
+                const imageBuffer = Buffer.from(imageData, 'base64');
+                fs.writeFileSync(filePath, imageBuffer);
+
+                let finalImageUrl = `/uploads/images/product-images/${filename}`;
+
+                // Step 4: Overlay logo if enabled
+                if (useLogo && logoUrl && logoPosition !== 'none') {
+                    const logoPath = await downloadLogo(logoUrl);
+                    if (logoPath) {
+                        finalImageUrl = await overlayLogo(filePath, logoPath, logoPosition, outputSize);
+
+                        // Clean up the non-logo version if a new file was created
+                        if (finalImageUrl !== `/uploads/images/product-images/${filename}`) {
+                            try {
+                                fs.unlinkSync(filePath);
+                            } catch (e) {
+                                // Ignore cleanup errors
                             }
                         }
                     }
-                    
-                    return finalImageUrl;
                 }
+
+                return finalImageUrl;
             }
         }
-        
-        throw new Error('No image generated in response');
+    }
+
+    throw new Error('No image generated in response');
+}
+
+/**
+ * Generate product images with background and logo for multiple camera angles
+ * @param {Object} params - Generation parameters
+ * @returns {Promise<Array<{angle: string, imageUrl: string, status: string, errorMessage: string}>>}
+ */
+async function generateProductWithBackground(params) {
+    const { originalImagePath, backgroundType, cameraAngles, customBackground, useLogo, logoPosition, logoUrl, outputSize, additionalNotes, brandContext } = params;
+
+    try {
+        // ============================================
+        // STEP 1: Analyze the product image (run once)
+        // ============================================
+        console.log('=== STEP 1: Analyzing product image ===');
+        const productAnalysis = await analyzeProductImage(originalImagePath);
+
+        // ============================================
+        // STEP 2: Build immutable consistency anchors
+        // ============================================
+        console.log('=== STEP 2: Building consistency anchors ===');
+        const identityAnchor = buildIdentityAnchor(productAnalysis);
+        const sceneBlueprint = await buildConsistentSceneBlueprint({
+            productAnalysis,
+            backgroundType,
+            customBackground,
+            additionalNotes,
+            brandContext
+        });
+
+        const normalizedAngles = normalizeCameraAngles(cameraAngles);
+        console.log('Camera angles to generate:', normalizedAngles);
+
+        // Consistency-first generation order (sequential)
+        const preferredOrder = ['medium', 'wide', 'closeup', 'detail', 'topdown'];
+        const orderedAngles = [
+            ...preferredOrder.filter(angle => normalizedAngles.includes(angle)),
+            ...normalizedAngles.filter(angle => !preferredOrder.includes(angle))
+        ];
+
+        const generatedImages = [];
+        let canonicalImagePath = null;
+        let previousAngleImagePath = null;
+
+        for (let i = 0; i < orderedAngles.length; i++) {
+            const cameraAngle = orderedAngles[i];
+            const isAnchor = i === 0;
+            let successUrl = '';
+            let errorMessage = '';
+
+            for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                    const angleSpecificNotes = additionalNotes
+                        ? `${additionalNotes}\n\nAngle requirement: ${cameraAngle} - ${CAMERA_ANGLE_PROMPTS[cameraAngle] || ''}`
+                        : `Angle requirement: ${cameraAngle} - ${CAMERA_ANGLE_PROMPTS[cameraAngle] || ''}`;
+
+                    successUrl = await generateSingleAngleImage({
+                        originalImagePath,
+                        canonicalImagePath,
+                        previousAngleImagePath,
+                        identityAnchor,
+                        sceneBlueprint,
+                        cameraAngle,
+                        useLogo,
+                        logoPosition,
+                        logoUrl,
+                        outputSize,
+                        additionalNotes: angleSpecificNotes,
+                        isAnchor,
+                        retryLevel: attempt
+                    });
+
+                    errorMessage = '';
+                    break;
+                } catch (error) {
+                    errorMessage = error.message || 'Lỗi khi tạo ảnh';
+                }
+            }
+
+            if (successUrl) {
+                const fullGeneratedPath = getFilePathFromUrl(successUrl);
+
+                // First successful image becomes canonical anchor for continuity.
+                if (!canonicalImagePath && fs.existsSync(fullGeneratedPath)) {
+                    canonicalImagePath = fullGeneratedPath;
+                }
+
+                if (fs.existsSync(fullGeneratedPath)) {
+                    previousAngleImagePath = fullGeneratedPath;
+                }
+
+                generatedImages.push({
+                    angle: cameraAngle,
+                    imageUrl: successUrl,
+                    status: 'completed',
+                    errorMessage: ''
+                });
+            } else {
+                generatedImages.push({
+                    angle: cameraAngle,
+                    imageUrl: '',
+                    status: 'failed',
+                    errorMessage
+                });
+            }
+        }
+
+        const successCount = generatedImages.filter(item => item.status === 'completed' && item.imageUrl).length;
+        if (successCount === 0) {
+            throw new Error(generatedImages[0]?.errorMessage || 'No image generated in response');
+        }
+
+        return generatedImages;
     } catch (error) {
         console.error('generateProductWithBackground error:', error);
         throw error;
@@ -551,10 +874,14 @@ module.exports = {
     buildMergedScenePrompt,
     buildSimplePrompt,
     generateProductWithBackground,
+    generateSingleAngleImage,
+    normalizeCameraAngles,
     overlayLogo,
     downloadLogo,
     getFilePathFromUrl,
     BACKGROUND_DESCRIPTIONS,
+    CAMERA_ANGLES,
+    CAMERA_ANGLE_PROMPTS,
     LOGO_POSITIONS,
     OUTPUT_SIZES
 };
