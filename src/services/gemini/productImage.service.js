@@ -10,6 +10,10 @@ const { v4: uuidv4 } = require('uuid');
 const sharp = require('sharp');
 const { genAI, getModel, MODELS, parseJsonResponse } = require('./gemini.config');
 const { injectBrandContextToPrompt } = require('./brandContext.service');
+const { composePromptBlocks } = require('./prompt-modules/shared/composer');
+const { buildCreativeInputBlock, normalizeCreativeInputs } = require('./prompt-modules/image/creativeInput.module');
+const { buildFnbPhotorealGuardrails } = require('./prompt-modules/image/fnbPhotoreal.module');
+const { logPromptDebug } = require('../../utils/promptDebug');
 
 // Upload directory for AI-generated product images
 const PRODUCT_IMAGES_DIR = path.join(process.cwd(), 'uploads', 'images', 'product-images');
@@ -204,6 +208,8 @@ function buildConsistentAnglePrompt(params) {
         cameraAngle,
         outputSize,
         additionalNotes,
+        creativeBlock,
+        photorealGuardrails,
         isAnchor,
         hasCanonicalRef,
         hasPreviousRef,
@@ -229,7 +235,8 @@ function buildConsistentAnglePrompt(params) {
 
     const negativeRules = (sceneBlueprint.hardNegativeRules || []).map((rule, index) => `${index + 1}. ${rule}`).join('\n');
 
-    return `## MULTI-ANGLE PRODUCT IMAGE GENERATION (CONSISTENCY MODE)
+    return composePromptBlocks([
+        `## MULTI-ANGLE PRODUCT IMAGE GENERATION (CONSISTENCY MODE)
 
 ### GOAL
 Generate one image that belongs to the same angle set with high consistency.
@@ -265,7 +272,10 @@ ${negativeRules}
 
 ### OPTIONAL USER NOTES
 ${additionalNotes || '(none)'}
-${retryInstruction}`;
+${retryInstruction}`,
+        creativeBlock,
+        photorealGuardrails
+    ]);
 }
 
 /**
@@ -448,8 +458,18 @@ Example output format:
     try {
         const result = await model.generateContent(mergePrompt);
         const mergedScene = result.response.text().trim();
-        
-        console.log('AI Merged Scene:', mergedScene);
+
+        logPromptDebug({
+            tool: 'image',
+            step: 'prompt-built',
+            data: {
+                mode: 'scene-merge',
+                cameraAngle,
+                backgroundType,
+                promptPreview: mergePrompt,
+                mergedScenePreview: mergedScene
+            }
+        });
         
         // Build final prompt with the merged scene
         const finalPrompt = `## CREATIVE PRODUCT IMAGE GENERATION
@@ -546,7 +566,6 @@ async function downloadLogo(logoUrl) {
  */
 async function overlayLogo(imagePath, logoPath, position, outputSize) {
     if (!logoPath || !fs.existsSync(logoPath)) {
-        console.log('No valid logo path, returning original image');
         return imagePath;
     }
     
@@ -623,8 +642,17 @@ async function overlayLogo(imagePath, logoPath, position, outputSize) {
                 }
             ])
             .toFile(outputPath);
-        
-        console.log('Logo overlay complete:', outputPath);
+
+        logPromptDebug({
+            tool: 'image',
+            step: 'ai-response',
+            data: {
+                mode: 'logo-overlay',
+                outputPath,
+                position,
+                outputSize
+            }
+        });
         
         // Clean up temp logo if it was downloaded
         if (logoPath.includes('temp-logo-')) {
@@ -657,14 +685,15 @@ async function generateSingleAngleImage(params) {
         logoUrl,
         outputSize,
         additionalNotes,
+        creativeBlock,
+        photorealGuardrails,
         isAnchor = false,
-        retryLevel = 0
+        retryLevel = 0,
+        modelName
     } = params;
 
-    console.log(`=== Generating image for angle [${cameraAngle}] | retry=${retryLevel} ===`);
-
     const imageModel = genAI.getGenerativeModel({
-        model: MODELS.IMAGE_GEN,
+        model: modelName || MODELS.IMAGE_GEN,
         generationConfig: {
             responseModalities: ['TEXT', 'IMAGE']
         }
@@ -676,10 +705,24 @@ async function generateSingleAngleImage(params) {
         cameraAngle,
         outputSize,
         additionalNotes,
+        creativeBlock,
+        photorealGuardrails,
         isAnchor,
         hasCanonicalRef: !!canonicalImagePath,
         hasPreviousRef: !!previousAngleImagePath,
         retryLevel
+    });
+
+    logPromptDebug({
+        tool: 'image',
+        step: 'prompt-built',
+        data: {
+            mode: 'single-angle',
+            modelName: modelName || MODELS.IMAGE_GEN,
+            cameraAngle,
+            retryLevel,
+            promptPreview: prompt
+        }
     });
 
     const originalPart = toInlineDataPart(originalImagePath);
@@ -733,6 +776,16 @@ async function generateSingleAngleImage(params) {
                     }
                 }
 
+                logPromptDebug({
+                    tool: 'image',
+                    step: 'ai-response',
+                    data: {
+                        mode: 'single-angle',
+                        cameraAngle,
+                        imageUrl: finalImageUrl
+                    }
+                });
+
                 return finalImageUrl;
             }
         }
@@ -747,19 +800,69 @@ async function generateSingleAngleImage(params) {
  * @returns {Promise<Array<{angle: string, imageUrl: string, status: string, errorMessage: string}>>}
  */
 async function generateProductWithBackground(params) {
-    const { originalImagePath, backgroundType, cameraAngles, customBackground, useLogo, logoPosition, logoUrl, outputSize, additionalNotes, brandContext } = params;
+    const {
+        originalImagePath,
+        backgroundType,
+        cameraAngles,
+        customBackground,
+        usagePurpose,
+        displayInfo,
+        adIntensity,
+        typographyGuidance,
+        targetAudience,
+        visualStyle,
+        realismPriority,
+        useLogo,
+        logoPosition,
+        logoUrl,
+        outputSize,
+        additionalNotes,
+        brandContext,
+        modelName
+    } = params;
 
     try {
-        // ============================================
-        // STEP 1: Analyze the product image (run once)
-        // ============================================
-        console.log('=== STEP 1: Analyzing product image ===');
+        logPromptDebug({
+            tool: 'image',
+            step: 'received-input',
+            data: {
+                backgroundType,
+                cameraAngles,
+                useLogo,
+                logoPosition,
+                outputSize,
+                usagePurpose,
+                displayInfo,
+                adIntensity,
+                typographyGuidance,
+                targetAudience,
+                visualStyle,
+                realismPriority,
+                hasBrandContext: !!brandContext
+            }
+        });
+
         const productAnalysis = await analyzeProductImage(originalImagePath);
 
-        // ============================================
-        // STEP 2: Build immutable consistency anchors
-        // ============================================
-        console.log('=== STEP 2: Building consistency anchors ===');
+        const creativeInputs = normalizeCreativeInputs({
+            usagePurpose,
+            displayInfo,
+            adIntensity,
+            typographyGuidance,
+            targetAudience,
+            visualStyle,
+            realismPriority
+        });
+        const { block: creativeBlock } = buildCreativeInputBlock(creativeInputs);
+        const { block: photorealGuardrails } = buildFnbPhotorealGuardrails({
+            ...creativeInputs,
+            backgroundType,
+            customBackground,
+            additionalNotes,
+            brandContext,
+            ...productAnalysis
+        });
+
         const identityAnchor = buildIdentityAnchor(productAnalysis);
         const sceneBlueprint = await buildConsistentSceneBlueprint({
             productAnalysis,
@@ -769,8 +872,27 @@ async function generateProductWithBackground(params) {
             brandContext
         });
 
+        logPromptDebug({
+            tool: 'image',
+            step: 'brand-context',
+            data: {
+                available: !!brandContext,
+                preview: brandContext
+            }
+        });
+
         const normalizedAngles = normalizeCameraAngles(cameraAngles);
-        console.log('Camera angles to generate:', normalizedAngles);
+
+        logPromptDebug({
+            tool: 'image',
+            step: 'prompt-built',
+            data: {
+                mode: 'multi-angle-plan',
+                normalizedAngles,
+                identityAnchor,
+                sceneBlueprint
+            }
+        });
 
         // Consistency-first generation order (sequential)
         const preferredOrder = ['medium', 'wide', 'closeup', 'detail', 'topdown'];
@@ -807,8 +929,11 @@ async function generateProductWithBackground(params) {
                         logoUrl,
                         outputSize,
                         additionalNotes: angleSpecificNotes,
+                        creativeBlock,
+                        photorealGuardrails,
                         isAnchor,
-                        retryLevel: attempt
+                        retryLevel: attempt,
+                        modelName
                     });
 
                     errorMessage = '';
@@ -851,8 +976,28 @@ async function generateProductWithBackground(params) {
             throw new Error(generatedImages[0]?.errorMessage || 'No image generated in response');
         }
 
+        logPromptDebug({
+            tool: 'image',
+            step: 'ai-response',
+            data: {
+                mode: 'multi-angle-result',
+                total: generatedImages.length,
+                successCount,
+                failedCount: generatedImages.length - successCount,
+                generatedImages
+            }
+        });
+
         return generatedImages;
     } catch (error) {
+        logPromptDebug({
+            tool: 'image',
+            step: 'ai-response-error',
+            data: {
+                message: error?.message,
+                stack: error?.stack
+            }
+        });
         console.error('generateProductWithBackground error:', error);
         throw error;
     }
@@ -864,8 +1009,26 @@ async function generateProductWithBackground(params) {
  * @returns {string} Full file system path
  */
 function getFilePathFromUrl(urlPath) {
-    // Remove leading slash and construct full path
-    const relativePath = urlPath.startsWith('/') ? urlPath.substring(1) : urlPath;
+    if (!urlPath || typeof urlPath !== 'string') {
+        throw new Error('Invalid image URL path');
+    }
+
+    let parsedPath = urlPath.trim();
+
+    if (/^https?:\/\//i.test(parsedPath)) {
+        try {
+            const url = new URL(parsedPath);
+            parsedPath = url.pathname || '';
+        } catch (error) {
+            throw new Error('Invalid image URL');
+        }
+    }
+
+    if (!parsedPath.startsWith('/uploads/')) {
+        throw new Error('Only local upload paths are supported (/uploads/...)');
+    }
+
+    const relativePath = parsedPath.replace(/^\/+/, '');
     return path.join(process.cwd(), relativePath);
 }
 

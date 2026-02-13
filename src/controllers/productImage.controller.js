@@ -6,8 +6,9 @@
 const ProductImage = require('../models/ProductImage');
 const AISettings = require('../models/AISettings');
 const geminiService = require('../services/gemini');
-const path = require('path');
+const { getModelForTask } = require('../services/gemini/modelConfig.service');
 const { deleteFilesFromPaths } = require('../utils/fileCleanup');
+const { logPromptDebug } = require('../utils/promptDebug');
 
 function normalizeCameraAngles(cameraAngles) {
     const supportedAngles = ['wide', 'medium', 'closeup', 'topdown', 'detail'];
@@ -46,6 +47,13 @@ exports.generateProductImage = async (req, res) => {
             backgroundType,
             cameraAngles,
             customBackground,
+            usagePurpose,
+            displayInfo,
+            adIntensity,
+            typographyGuidance,
+            targetAudience,
+            visualStyle,
+            realismPriority,
             useLogo,
             logoPosition,
             outputSize,
@@ -53,6 +61,30 @@ exports.generateProductImage = async (req, res) => {
             useBrandSettings,
             title
         } = req.body;
+
+        logPromptDebug({
+            tool: 'image',
+            step: 'received-input',
+            data: {
+                originalImageUrl,
+                backgroundType,
+                cameraAngles,
+                customBackground,
+                usagePurpose,
+                displayInfo,
+                adIntensity,
+                typographyGuidance,
+                targetAudience,
+                visualStyle,
+                realismPriority,
+                useLogo,
+                logoPosition,
+                outputSize,
+                additionalNotes,
+                useBrandSettings,
+                title
+            }
+        });
 
         // Validate required fields
         if (!originalImageUrl) {
@@ -62,14 +94,34 @@ exports.generateProductImage = async (req, res) => {
             });
         }
 
+        const normalizedOriginalImageUrl = typeof originalImageUrl === 'string' ? originalImageUrl.trim() : '';
+        if (!normalizedOriginalImageUrl.startsWith('/uploads/')) {
+            return res.status(400).json({
+                success: false,
+                message: 'originalImageUrl phải là đường dẫn upload cục bộ, ví dụ: /uploads/...'
+            });
+        }
+
+        const normalizedBackgroundType = backgroundType || 'studio';
+        const normalizedCustomBackground = typeof customBackground === 'string' ? customBackground.trim() : '';
+        if (normalizedBackgroundType === 'custom' && !normalizedCustomBackground) {
+            return res.status(400).json({
+                success: false,
+                message: 'customBackground là bắt buộc khi backgroundType là custom'
+            });
+        }
+
         const normalizedAngles = normalizeCameraAngles(cameraAngles);
+
+        // Get user's selected model for image generation
+        const imageGenModel = await getModelForTask('imageGen', req.user._id);
 
         // Create initial record with processing status
         const productImage = await ProductImage.create({
             userId: req.user._id,
             title: title || 'Ảnh sản phẩm ' + new Date().toLocaleDateString('vi-VN'),
-            originalImageUrl,
-            backgroundType: backgroundType || 'studio',
+            originalImageUrl: normalizedOriginalImageUrl,
+            backgroundType: normalizedBackgroundType,
             cameraAngles: normalizedAngles,
             generatedImages: normalizedAngles.map((angle) => ({
                 angle,
@@ -77,7 +129,15 @@ exports.generateProductImage = async (req, res) => {
                 status: 'processing',
                 errorMessage: ''
             })),
-            customBackground: customBackground || '',
+            customBackground: normalizedCustomBackground,
+            usagePurpose: usagePurpose || '',
+            displayInfo: displayInfo || '',
+            adIntensity: adIntensity || '',
+            typographyGuidance: typographyGuidance || '',
+            targetAudience: targetAudience || '',
+            visualStyle: visualStyle || '',
+            realismPriority: realismPriority || '',
+            modelUsed: imageGenModel || '',
             useLogo: useLogo !== false,
             logoPosition: logoPosition || 'bottom-right',
             outputSize: outputSize || '1:1',
@@ -93,27 +153,61 @@ exports.generateProductImage = async (req, res) => {
         if (useBrandSettings) {
             const aiSettings = await AISettings.findOne({ userId: req.user._id });
             if (aiSettings) {
-                brandContext = geminiService.buildBrandContext(aiSettings);
+                try {
+                    brandContext = await geminiService.buildRichBrandContext(aiSettings);
+                } catch (error) {
+                    brandContext = geminiService.buildBrandContext(aiSettings);
+                }
                 logoUrl = aiSettings.logo?.logoUrl;
             }
         }
 
+        logPromptDebug({
+            tool: 'image',
+            step: 'brand-context',
+            data: {
+                enabled: !!useBrandSettings,
+                available: !!brandContext,
+                preview: brandContext,
+                hasLogoUrl: !!logoUrl
+            }
+        });
+
         // Get full path to original image
-        const originalImagePath = geminiService.productImageService.getFilePathFromUrl(originalImageUrl);
+        const originalImagePath = geminiService.productImageService.getFilePathFromUrl(normalizedOriginalImageUrl);
 
         try {
             // Generate the image
             const generatedImages = await geminiService.productImageService.generateProductWithBackground({
                 originalImagePath,
-                backgroundType: backgroundType || 'studio',
+                backgroundType: normalizedBackgroundType,
                 cameraAngles: normalizedAngles,
-                customBackground,
+                customBackground: normalizedCustomBackground,
+                usagePurpose,
+                displayInfo,
+                adIntensity,
+                typographyGuidance,
+                targetAudience,
+                visualStyle,
+                realismPriority,
                 useLogo: useLogo !== false,
                 logoPosition: logoPosition || 'bottom-right',
                 logoUrl,
                 outputSize: outputSize || '1:1',
                 additionalNotes,
-                brandContext
+                brandContext,
+                modelName: imageGenModel
+            });
+
+            logPromptDebug({
+                tool: 'image',
+                step: 'ai-response',
+                data: {
+                    ok: true,
+                    total: generatedImages.length,
+                    successCount: generatedImages.filter((item) => item.status === 'completed').length,
+                    generatedImages
+                }
             });
 
             // Update record with result
@@ -130,6 +224,15 @@ exports.generateProductImage = async (req, res) => {
                 data: productImage
             });
         } catch (genError) {
+            logPromptDebug({
+                tool: 'image',
+                step: 'ai-response-error',
+                data: {
+                    message: genError?.message,
+                    stack: genError?.stack,
+                    phase: 'generateProductImage'
+                }
+            });
             // Update record with error
             productImage.status = 'failed';
             productImage.errorMessage = genError.message;
@@ -138,6 +241,15 @@ exports.generateProductImage = async (req, res) => {
             throw genError;
         }
     } catch (error) {
+        logPromptDebug({
+            tool: 'image',
+            step: 'ai-response-error',
+            data: {
+                message: error?.message,
+                stack: error?.stack,
+                phase: 'generateProductImage-controller'
+            }
+        });
         console.error('Generate product image error:', error);
         res.status(500).json({
             success: false,
@@ -153,6 +265,15 @@ exports.generateProductImage = async (req, res) => {
 exports.regenerateProductImage = async (req, res) => {
     try {
         const { id } = req.params;
+
+        logPromptDebug({
+            tool: 'image',
+            step: 'received-input',
+            data: {
+                operation: 'regenerateProductImage',
+                id
+            }
+        });
 
         // Find the original record (must be owned by user)
         const originalImage = await ProductImage.findOne({
@@ -174,13 +295,54 @@ exports.regenerateProductImage = async (req, res) => {
         if (originalImage.usedBrandSettings) {
             const aiSettings = await AISettings.findOne({ userId: req.user._id });
             if (aiSettings) {
-                brandContext = geminiService.buildBrandContext(aiSettings);
+                try {
+                    brandContext = await geminiService.buildRichBrandContext(aiSettings);
+                } catch (error) {
+                    brandContext = geminiService.buildBrandContext(aiSettings);
+                }
                 logoUrl = aiSettings.logo?.logoUrl;
             }
         }
 
+        logPromptDebug({
+            tool: 'image',
+            step: 'brand-context',
+            data: {
+                enabled: !!originalImage.usedBrandSettings,
+                available: !!brandContext,
+                preview: brandContext,
+                hasLogoUrl: !!logoUrl
+            }
+        });
+
         // Get full path to original image
-        const originalImagePath = geminiService.productImageService.getFilePathFromUrl(originalImage.originalImageUrl);
+        const normalizedOriginalImageUrl = typeof originalImage.originalImageUrl === 'string'
+            ? originalImage.originalImageUrl.trim()
+            : '';
+
+        if (!normalizedOriginalImageUrl.startsWith('/uploads/')) {
+            return res.status(400).json({
+                success: false,
+                message: 'Ảnh gốc không hợp lệ: originalImageUrl phải là đường dẫn cục bộ /uploads/...'
+            });
+        }
+
+        const normalizedCustomBackground = typeof originalImage.customBackground === 'string'
+            ? originalImage.customBackground.trim()
+            : '';
+        if (originalImage.backgroundType === 'custom' && !normalizedCustomBackground) {
+            return res.status(400).json({
+                success: false,
+                message: 'Dữ liệu cũ không hợp lệ: customBackground là bắt buộc khi backgroundType là custom'
+            });
+        }
+
+        const originalImagePath = geminiService.productImageService.getFilePathFromUrl(normalizedOriginalImageUrl);
+
+        const imageGenModel = originalImage.modelUsed || await getModelForTask('imageGen', req.user._id);
+        if (!originalImage.modelUsed && imageGenModel) {
+            originalImage.modelUsed = imageGenModel;
+        }
 
         // Delete old generated image(s) before regenerating (to save storage)
         const oldGeneratedUrls = [
@@ -193,7 +355,6 @@ exports.regenerateProductImage = async (req, res) => {
         if (oldGeneratedUrls.length > 0) {
             const { deleteFilesFromPaths } = require('../utils/fileCleanup');
             await deleteFilesFromPaths(oldGeneratedUrls);
-            console.log('Deleted old generated images:', oldGeneratedUrls.length);
         }
 
         // Update status to processing
@@ -215,13 +376,33 @@ exports.regenerateProductImage = async (req, res) => {
                 originalImagePath,
                 backgroundType: originalImage.backgroundType,
                 cameraAngles: normalizedAngles,
-                customBackground: originalImage.customBackground,
+                customBackground: normalizedCustomBackground,
+                usagePurpose: originalImage.usagePurpose,
+                displayInfo: originalImage.displayInfo,
+                adIntensity: originalImage.adIntensity,
+                typographyGuidance: originalImage.typographyGuidance,
+                targetAudience: originalImage.targetAudience,
+                visualStyle: originalImage.visualStyle,
+                realismPriority: originalImage.realismPriority,
                 useLogo: originalImage.useLogo,
                 logoPosition: originalImage.logoPosition,
                 logoUrl,
                 outputSize: originalImage.outputSize,
                 additionalNotes: originalImage.additionalNotes,
-                brandContext
+                brandContext,
+                modelName: imageGenModel
+            });
+
+            logPromptDebug({
+                tool: 'image',
+                step: 'ai-response',
+                data: {
+                    ok: true,
+                    operation: 'regenerateProductImage',
+                    total: generatedImages.length,
+                    successCount: generatedImages.filter((item) => item.status === 'completed').length,
+                    generatedImages
+                }
             });
 
             // Update record with new result
@@ -238,6 +419,15 @@ exports.regenerateProductImage = async (req, res) => {
                 data: originalImage
             });
         } catch (genError) {
+            logPromptDebug({
+                tool: 'image',
+                step: 'ai-response-error',
+                data: {
+                    operation: 'regenerateProductImage',
+                    message: genError?.message,
+                    stack: genError?.stack
+                }
+            });
             originalImage.status = 'failed';
             originalImage.errorMessage = genError.message;
             await originalImage.save();
@@ -245,6 +435,15 @@ exports.regenerateProductImage = async (req, res) => {
             throw genError;
         }
     } catch (error) {
+        logPromptDebug({
+            tool: 'image',
+            step: 'ai-response-error',
+            data: {
+                operation: 'regenerateProductImage-controller',
+                message: error?.message,
+                stack: error?.stack
+            }
+        });
         console.error('Regenerate product image error:', error);
         res.status(500).json({
             success: false,

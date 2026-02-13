@@ -14,6 +14,9 @@ router.use(protect);
 // Generate marketing plan with AI
 router.post('/generate', marketingPlanController.generateMarketingPlan);
 
+// Suggest monthly strategy with AI
+router.post('/suggest-strategy', marketingPlanController.suggestMonthlyStrategy);
+
 // Get all plans
 router.get('/', marketingPlanController.getAllPlans);
 

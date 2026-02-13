@@ -80,6 +80,50 @@ const ProductImageSchema = new mongoose.Schema({
         trim: true,
         default: ''
     },
+
+    // Creative guidance (optional)
+    usagePurpose: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    displayInfo: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    adIntensity: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    typographyGuidance: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    targetAudience: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    visualStyle: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    realismPriority: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+
+    // Model used for this generation
+    modelUsed: {
+        type: String,
+        trim: true,
+        default: ''
+    },
     
     // Logo settings
     useLogo: {

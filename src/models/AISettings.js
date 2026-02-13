@@ -75,6 +75,11 @@ const AISettingsSchema = new mongoose.Schema({
             type: String,
             trim: true,
             default: ''
+        },
+        brandPronoun: {
+            type: String,
+            trim: true,
+            default: ''
         }
     },
     tone: {

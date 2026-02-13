@@ -86,8 +86,24 @@ const VideoScriptSchema = new mongoose.Schema({
     },
     ideaMode: {
         type: String,
-        enum: ['manual', 'ai'],
+        enum: ['manual', 'ai', 'concept_suggestion'],
         default: 'ai'
+    },
+    videoGoal: {
+        type: String,
+        default: ''
+    },
+    targetAudience: {
+        type: String,
+        default: ''
+    },
+    featuredProductService: {
+        type: String,
+        default: ''
+    },
+    selectedConceptTitle: {
+        type: String,
+        default: ''
     },
     
     // Status

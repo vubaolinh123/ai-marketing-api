@@ -4,6 +4,7 @@
  */
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { MODEL_RECOMMENDATIONS, DEFAULT_MODELS } = require('./modelConfig.service');
 
 // Validate API key
 if (!process.env.API_KEY_GEMINI) {
@@ -15,16 +16,22 @@ const genAI = new GoogleGenerativeAI(process.env.API_KEY_GEMINI);
 
 // Model configurations
 const MODELS = {
-    TEXT: 'gemini-2.0-flash',           // Fast text generation
-    VISION: 'gemini-2.0-flash',          // Vision + text
-    IMAGE_GEN: 'gemini-2.0-flash-exp-image-generation'    // Native image generation (experimental)
+    TEXT: DEFAULT_MODELS.text || 'gemini-2.0-flash',
+    VISION: DEFAULT_MODELS.vision || 'gemini-2.0-flash',
+    IMAGE_GEN: DEFAULT_MODELS.imageGen || 'gemini-2.0-flash-exp-image-generation'
 };
 
 // Purpose labels for prompts
 const PURPOSE_LABELS = {
     introduce: 'giới thiệu sản phẩm/dịch vụ',
     sell: 'bán hàng/khuyến mãi',
-    share_knowledge: 'chia sẻ kiến thức'
+    share_knowledge: 'chia sẻ kiến thức',
+    brand_awareness: 'tăng nhận diện thương hiệu',
+    attract_leads: 'thu hút khách hàng tiềm năng',
+    nurture_educate: 'nuôi dưỡng và giáo dục khách hàng',
+    convert_sales: 'chuyển đổi bán hàng',
+    retention_loyalty: 'duy trì và tăng trung thành',
+    brand_positioning: 'định vị thương hiệu'
 };
 
 /**
@@ -34,8 +41,66 @@ const PURPOSE_LABELS = {
  * @returns {Object} Model instance
  */
 function getModel(type, customModelName = null) {
-    const modelName = customModelName || MODELS[type] || MODELS.TEXT;
-    return genAI.getGenerativeModel({ model: modelName });
+    const modelName = resolveModelName(type, customModelName);
+
+    try {
+        return genAI.getGenerativeModel({ model: modelName });
+    } catch (error) {
+        const fallbackModelName = MODELS[normalizeModelType(type)] || MODELS.TEXT;
+        console.error('Gemini model init failed, fallback to default model:', error);
+        return genAI.getGenerativeModel({ model: fallbackModelName });
+    }
+}
+
+function normalizeModelType(type) {
+    if (!type) return 'TEXT';
+    const normalized = String(type).trim().toUpperCase();
+    return MODELS[normalized] ? normalized : 'TEXT';
+}
+
+function toTaskType(type) {
+    const typeMap = {
+        TEXT: 'text',
+        VISION: 'vision',
+        IMAGE_GEN: 'imageGen'
+    };
+    return typeMap[normalizeModelType(type)] || 'text';
+}
+
+function getKnownModelsForTask(taskType) {
+    const known = new Set();
+    const recommendations = MODEL_RECOMMENDATIONS[taskType] || [];
+
+    for (const item of recommendations) {
+        if (item && item.modelId) {
+            known.add(item.modelId);
+        }
+    }
+
+    if (DEFAULT_MODELS[taskType]) {
+        known.add(DEFAULT_MODELS[taskType]);
+    }
+
+    return known;
+}
+
+function resolveModelName(type, customModelName = null) {
+    const normalizedType = normalizeModelType(type);
+    const fallbackModelName = MODELS[normalizedType] || MODELS.TEXT;
+
+    if (typeof customModelName !== 'string' || !customModelName.trim()) {
+        return fallbackModelName;
+    }
+
+    const requestedModel = customModelName.trim();
+    const taskType = toTaskType(normalizedType);
+    const knownModels = getKnownModelsForTask(taskType);
+
+    if (knownModels.has(requestedModel)) {
+        return requestedModel;
+    }
+
+    return fallbackModelName;
 }
 
 /**
@@ -61,5 +126,6 @@ module.exports = {
     MODELS,
     PURPOSE_LABELS,
     getModel,
+    resolveModelName,
     parseJsonResponse
 };

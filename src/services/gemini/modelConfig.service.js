@@ -79,6 +79,24 @@ const MODEL_RECOMMENDATIONS = {
     ],
     imageGen: [
         {
+            modelId: 'gemini-2.5-flash-image',
+            displayName: 'Gemini 2.5 Flash Image',
+            badge: 'hot',
+            badgeIcon: '🔥',
+            quality: 'High',
+            tokensPerImage: '~1000',
+            description: 'Tạo ảnh chất lượng cao, tốc độ nhanh'
+        },
+        {
+            modelId: 'gemini-3-pro-image-preview',
+            displayName: 'Gemini 3 Pro Image Preview',
+            badge: 'premium',
+            badgeIcon: '⭐',
+            quality: 'Highest',
+            tokensPerImage: '~1000',
+            description: 'Mô hình preview chất lượng cao cho hình ảnh'
+        },
+        {
             modelId: 'gemini-2.0-flash-exp-image-generation',
             displayName: 'Gemini 2.0 Flash Image Gen',
             badge: 'stable',
@@ -106,13 +124,13 @@ const DEFAULT_MODELS = {
 async function getModelForTask(taskType, userId) {
     try {
         if (!userId) {
-            return DEFAULT_MODELS[taskType] || DEFAULT_MODELS.text;
+            return sanitizeModelForTask(taskType);
         }
 
         const settings = await AISettings.findOne({ userId });
         
         if (!settings || !settings.aiModels) {
-            return DEFAULT_MODELS[taskType] || DEFAULT_MODELS.text;
+            return sanitizeModelForTask(taskType);
         }
 
         const modelMap = {
@@ -121,10 +139,10 @@ async function getModelForTask(taskType, userId) {
             imageGen: settings.aiModels.imageGenModel
         };
 
-        return modelMap[taskType] || DEFAULT_MODELS[taskType] || DEFAULT_MODELS.text;
+        return sanitizeModelForTask(taskType, modelMap[taskType]);
     } catch (error) {
         console.error('Error getting model for task:', error);
-        return DEFAULT_MODELS[taskType] || DEFAULT_MODELS.text;
+        return sanitizeModelForTask(taskType);
     }
 }
 
@@ -155,11 +173,30 @@ function isValidModel(taskType, modelId) {
     return recommendations.some(m => m.modelId === modelId);
 }
 
+/**
+ * Sanitize model id for task type, fallback to default if invalid
+ * @param {string} taskType - Task type
+ * @param {string} modelId - Incoming model ID
+ * @returns {string} Safe model ID
+ */
+function sanitizeModelForTask(taskType, modelId) {
+    const safeTaskType = MODEL_RECOMMENDATIONS[taskType] ? taskType : 'text';
+    const fallbackModel = DEFAULT_MODELS[safeTaskType] || DEFAULT_MODELS.text;
+
+    if (typeof modelId !== 'string' || !modelId.trim()) {
+        return fallbackModel;
+    }
+
+    const trimmedModelId = modelId.trim();
+    return isValidModel(safeTaskType, trimmedModelId) ? trimmedModelId : fallbackModel;
+}
+
 module.exports = {
     getModelForTask,
     getModelRecommendations,
     getDefaultModels,
     isValidModel,
+    sanitizeModelForTask,
     MODEL_RECOMMENDATIONS,
     DEFAULT_MODELS
 };

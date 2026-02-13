@@ -14,6 +14,7 @@ router.use(protect);
 // Generate routes
 router.post('/generate', videoScriptController.generateScript);
 router.post('/generate-idea', videoScriptController.generateIdea);
+router.post('/suggest-concepts', videoScriptController.suggestConcepts);
 
 // CRUD routes
 router.get('/', videoScriptController.getAllScripts);

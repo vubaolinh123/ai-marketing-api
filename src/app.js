@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const path = require('path');
-const { errorHandler } = require('./middlewares');
+const { errorHandler, requestLogger } = require('./middlewares');
 const { authRoutes, userRoutes, aiSettingsRoutes, articleRoutes, uploadRoutes, aiRoutes, videoScriptRoutes, productImageRoutes, marketingPlanRoutes } = require('./routes');
 
 const app = express();
@@ -23,6 +23,9 @@ app.use(cors({
 // Body parser
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// API request logger (error-focused by default)
+app.use(requestLogger);
 
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));

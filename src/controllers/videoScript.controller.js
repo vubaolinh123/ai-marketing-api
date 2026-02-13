@@ -7,6 +7,29 @@ const VideoScript = require('../models/VideoScript');
 const AISettings = require('../models/AISettings');
 const geminiService = require('../services/gemini');
 const { exportVideoScriptToExcel } = require('../services/excel');
+const { getModelForTask } = require('../services/gemini/modelConfig.service');
+const { logPromptDebug } = require('../utils/promptDebug');
+
+function clampNumber(value, fallback, min, max) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    if (typeof min === 'number' && parsed < min) return min;
+    if (typeof max === 'number' && parsed > max) return max;
+    return parsed;
+}
+
+async function resolveBrandContext(userId, useBrandSettings) {
+    if (!useBrandSettings) return null;
+
+    const aiSettings = await AISettings.findOne({ userId });
+    if (!aiSettings) return null;
+
+    try {
+        return await geminiService.buildRichBrandContext(aiSettings);
+    } catch (error) {
+        return geminiService.buildBrandContext(aiSettings);
+    }
+}
 
 /**
  * Generate video script with AI
@@ -23,8 +46,32 @@ exports.generateScript = async (req, res) => {
             otherRequirements,
             ideaMode,
             customIdea,
+            videoGoal,
+            targetAudience,
+            featuredProductService,
+            selectedConceptTitle,
             useBrandSettings 
         } = req.body;
+
+        logPromptDebug({
+            tool: 'video',
+            step: 'received-input',
+            data: {
+                title,
+                duration,
+                sceneCount,
+                size,
+                hasVoiceOver,
+                otherRequirements,
+                ideaMode,
+                customIdea,
+                videoGoal,
+                targetAudience,
+                featuredProductService,
+                selectedConceptTitle,
+                useBrandSettings
+            }
+        });
 
         // Validate required fields
         if (!title) {
@@ -35,11 +82,19 @@ exports.generateScript = async (req, res) => {
         }
 
         // Fetch brand context if enabled
-        let brandContext = null;
-        if (useBrandSettings) {
-            const aiSettings = await AISettings.findOne({ userId: req.user._id });
-            brandContext = geminiService.buildBrandContext(aiSettings);
-        }
+        const brandContext = await resolveBrandContext(req.user._id, useBrandSettings);
+
+        logPromptDebug({
+            tool: 'video',
+            step: 'brand-context',
+            data: {
+                enabled: !!useBrandSettings,
+                available: !!brandContext,
+                preview: brandContext
+            }
+        });
+
+        const textModel = await getModelForTask('text', req.user._id);
 
         // Generate script with AI
         const result = await geminiService.generateVideoScript({
@@ -51,9 +106,24 @@ exports.generateScript = async (req, res) => {
                 hasVoiceOver,
                 otherRequirements,
                 ideaMode,
-                customIdea
+                customIdea,
+                videoGoal,
+                targetAudience,
+                featuredProductService,
+                selectedConceptTitle
             },
-            brandContext
+            brandContext,
+            modelName: textModel
+        });
+
+        logPromptDebug({
+            tool: 'video',
+            step: 'ai-response',
+            data: {
+                modelName: textModel,
+                summary: result?.summary,
+                sceneCount: Array.isArray(result?.scenes) ? result.scenes.length : 0
+            }
         });
 
         // Save to database
@@ -68,6 +138,10 @@ exports.generateScript = async (req, res) => {
             scenes: result.scenes,
             otherRequirements,
             ideaMode,
+            videoGoal: videoGoal || '',
+            targetAudience: targetAudience || '',
+            featuredProductService: featuredProductService || '',
+            selectedConceptTitle: selectedConceptTitle || '',
             status: 'completed'
         });
 
@@ -77,6 +151,15 @@ exports.generateScript = async (req, res) => {
             data: videoScript
         });
     } catch (error) {
+        logPromptDebug({
+            tool: 'video',
+            step: 'ai-response-error',
+            data: {
+                message: error?.message,
+                stack: error?.stack,
+                operation: 'generateScript'
+            }
+        });
         console.error('Generate script error:', error);
         res.status(500).json({
             success: false,
@@ -91,7 +174,32 @@ exports.generateScript = async (req, res) => {
  */
 exports.generateIdea = async (req, res) => {
     try {
-        const { title, duration, sceneCount, useBrandSettings } = req.body;
+        const {
+            title,
+            duration,
+            sceneCount,
+            videoGoal,
+            targetAudience,
+            featuredProductService,
+            selectedConceptTitle,
+            useBrandSettings
+        } = req.body;
+
+        logPromptDebug({
+            tool: 'video',
+            step: 'received-input',
+            data: {
+                mode: 'generate-idea',
+                title,
+                duration,
+                sceneCount,
+                videoGoal,
+                targetAudience,
+                featuredProductService,
+                selectedConceptTitle,
+                useBrandSettings
+            }
+        });
 
         // Validate required fields
         if (!title) {
@@ -110,15 +218,41 @@ exports.generateIdea = async (req, res) => {
         }
 
         // Fetch brand context
-        const aiSettings = await AISettings.findOne({ userId: req.user._id });
-        const brandContext = geminiService.buildBrandContext(aiSettings);
+        const brandContext = await resolveBrandContext(req.user._id, useBrandSettings);
+
+        logPromptDebug({
+            tool: 'video',
+            step: 'brand-context',
+            data: {
+                enabled: !!useBrandSettings,
+                available: !!brandContext,
+                preview: brandContext
+            }
+        });
+
+        const textModel = await getModelForTask('text', req.user._id);
 
         // Generate idea with parameters
         const idea = await geminiService.generateRandomIdea({
             title,
             duration,
             sceneCount,
-            brandContext
+            videoGoal,
+            targetAudience,
+            featuredProductService,
+            selectedConceptTitle,
+            brandContext,
+            modelName: textModel
+        });
+
+        logPromptDebug({
+            tool: 'video',
+            step: 'ai-response',
+            data: {
+                mode: 'generate-idea',
+                modelName: textModel,
+                ideaPreview: idea
+            }
         });
 
         res.status(200).json({
@@ -126,10 +260,122 @@ exports.generateIdea = async (req, res) => {
             data: idea
         });
     } catch (error) {
+        logPromptDebug({
+            tool: 'video',
+            step: 'ai-response-error',
+            data: {
+                mode: 'generate-idea',
+                message: error?.message,
+                stack: error?.stack
+            }
+        });
         console.error('Generate idea error:', error);
         res.status(500).json({
             success: false,
             message: error.message || 'Lỗi khi tạo ý tưởng'
+        });
+    }
+};
+
+/**
+ * Suggest video concepts with richer context
+ * POST /api/video-scripts/suggest-concepts
+ */
+exports.suggestConcepts = async (req, res) => {
+    try {
+        const {
+            title,
+            duration,
+            sceneCount,
+            videoGoal,
+            targetAudience,
+            featuredProductService,
+            conceptCount,
+            useBrandSettings
+        } = req.body;
+
+        logPromptDebug({
+            tool: 'video',
+            step: 'received-input',
+            data: {
+                mode: 'suggest-concepts',
+                title,
+                duration,
+                sceneCount,
+                videoGoal,
+                targetAudience,
+                featuredProductService,
+                conceptCount,
+                useBrandSettings
+            }
+        });
+
+        if (!title || !videoGoal || !targetAudience || !featuredProductService) {
+            return res.status(400).json({
+                success: false,
+                message: 'Vui lòng cung cấp đầy đủ: title, videoGoal, targetAudience, featuredProductService'
+            });
+        }
+
+        const safeConceptCount = clampNumber(conceptCount, 5, 3, 5);
+        const safeSceneCount = clampNumber(sceneCount, 6, 2, 30);
+        const brandContext = await resolveBrandContext(req.user._id, useBrandSettings);
+
+        logPromptDebug({
+            tool: 'video',
+            step: 'brand-context',
+            data: {
+                enabled: !!useBrandSettings,
+                available: !!brandContext,
+                preview: brandContext
+            }
+        });
+
+        const textModel = await getModelForTask('text', req.user._id);
+
+        const result = await geminiService.suggestVideoConcepts({
+            title,
+            duration,
+            sceneCount: safeSceneCount,
+            videoGoal,
+            targetAudience,
+            featuredProductService,
+            conceptCount: safeConceptCount,
+            brandContext,
+            modelName: textModel
+        });
+
+        logPromptDebug({
+            tool: 'video',
+            step: 'ai-response',
+            data: {
+                mode: 'suggest-concepts',
+                modelName: textModel,
+                conceptCount: Array.isArray(result?.concepts) ? result.concepts.length : 0
+            }
+        });
+
+        res.status(200).json({
+            success: true,
+            data: {
+                ...result,
+                conceptCount: safeConceptCount
+            }
+        });
+    } catch (error) {
+        logPromptDebug({
+            tool: 'video',
+            step: 'ai-response-error',
+            data: {
+                mode: 'suggest-concepts',
+                message: error?.message,
+                stack: error?.stack
+            }
+        });
+        console.error('Suggest concepts error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message || 'Lỗi khi gợi ý concept video'
         });
     }
 };

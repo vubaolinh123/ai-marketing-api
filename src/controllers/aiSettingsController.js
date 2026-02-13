@@ -1,4 +1,16 @@
 const { AISettings } = require('../models');
+const { sanitizeModelForTask } = require('../services/gemini/modelConfig.service');
+
+function sanitizeAiModelsPayload(aiModels = {}) {
+    const currentModels = (aiModels && typeof aiModels === 'object') ? aiModels : {};
+
+    return {
+        ...currentModels,
+        textModel: sanitizeModelForTask('text', currentModels.textModel),
+        visionModel: sanitizeModelForTask('vision', currentModels.visionModel),
+        imageGenModel: sanitizeModelForTask('imageGen', currentModels.imageGenModel)
+    };
+}
 
 // Default settings structure
 const defaultSettings = {
@@ -15,7 +27,8 @@ const defaultSettings = {
     },
     language: {
         keywords: [],
-        customerTerm: ''
+        customerTerm: '',
+        brandPronoun: ''
     },
     tone: {
         overallTone: [],
@@ -77,7 +90,7 @@ const updateSettings = async (req, res, next) => {
         if (tone !== undefined) updateData.tone = tone;
         if (product !== undefined) updateData.product = product;
         if (facebook !== undefined) updateData.facebook = facebook;
-        if (aiModels !== undefined) updateData.aiModels = aiModels;
+        if (aiModels !== undefined) updateData.aiModels = sanitizeAiModelsPayload(aiModels);
 
         let settings = await AISettings.findOneAndUpdate(
             { userId: req.user.id },
@@ -110,8 +123,12 @@ const updateSection = async (req, res, next) => {
             });
         }
 
+        const sectionPayload = section === 'aiModels'
+            ? sanitizeAiModelsPayload(req.body)
+            : req.body;
+
         const updateData = {
-            [section]: req.body
+            [section]: sectionPayload
         };
 
         let settings = await AISettings.findOneAndUpdate(

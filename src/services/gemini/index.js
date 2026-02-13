@@ -7,9 +7,9 @@ const { generateArticleContent } = require('./articleText.service');
 const { generateArticleWithImage } = require('./articleVision.service');
 const { generateImage, generateArticleWithAIImage } = require('./imageGen.service');
 const { analyzeImage, analyzeImageUrl } = require('./imageAnalysis.service');
-const { buildBrandContext, hasBrandData, injectBrandContextToPrompt } = require('./brandContext.service');
-const { generateVideoScript, generateRandomIdea } = require('./videoScript.service');
-const { generateMarketingPlan } = require('./marketingPlan.service');
+const { buildBrandContext, buildRichBrandContext, hasBrandData, injectBrandContextToPrompt } = require('./brandContext.service');
+const { generateVideoScript, generateRandomIdea, suggestVideoConcepts } = require('./videoScript.service');
+const { generateMarketingPlan, generateMonthlyStrategy } = require('./marketingPlan.service');
 const productImageService = require('./productImage.service');
 const modelConfigService = require('./modelConfig.service');
 
@@ -30,15 +30,18 @@ module.exports = {
     
     // Brand context
     buildBrandContext,
+    buildRichBrandContext,
     hasBrandData,
     injectBrandContextToPrompt,
     
     // Video script
     generateVideoScript,
     generateRandomIdea,
+    suggestVideoConcepts,
     
     // Marketing plan
     generateMarketingPlan,
+    generateMonthlyStrategy,
     
     // Product image
     productImageService,

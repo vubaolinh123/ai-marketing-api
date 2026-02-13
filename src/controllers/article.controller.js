@@ -1,6 +1,10 @@
 const Article = require('../models/Article');
 const { deleteFileFromPath } = require('../utils/fileCleanup');
 
+function escapeRegex(input = '') {
+    return String(input).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * Create a new article
  * POST /api/articles
@@ -58,7 +62,10 @@ exports.getArticles = async (req, res) => {
             filter.topic = req.query.topic;
         }
         if (req.query.purpose) {
-            filter.purpose = req.query.purpose;
+            filter.purpose = {
+                $regex: escapeRegex(req.query.purpose),
+                $options: 'i'
+            };
         }
         if (req.query.status) {
             filter.status = req.query.status;
@@ -139,24 +146,44 @@ exports.updateArticle = async (req, res) => {
     try {
         const { title, content, topic, purpose, imageUrl, imageUrls, hashtags, status } = req.body;
 
-        const normalizedImageUrls = Array.isArray(imageUrls) && imageUrls.length > 0
-            ? imageUrls.filter(Boolean)
-            : imageUrl
-                ? [imageUrl]
-                : [];
+        const updateData = {};
+
+        if (Object.prototype.hasOwnProperty.call(req.body, 'title')) {
+            updateData.title = title;
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, 'content')) {
+            updateData.content = content;
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, 'topic')) {
+            updateData.topic = topic;
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, 'purpose')) {
+            updateData.purpose = purpose;
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, 'hashtags')) {
+            updateData.hashtags = hashtags;
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, 'status')) {
+            updateData.status = status;
+        }
+
+        // Image fields use partial-update semantics:
+        // - omit => preserve existing values
+        // - provide imageUrls => update imageUrls and sync imageUrl to first item
+        // - provide imageUrl only => update imageUrl and keep imageUrls unless explicitly provided
+        if (Object.prototype.hasOwnProperty.call(req.body, 'imageUrls')) {
+            const normalizedImageUrls = Array.isArray(imageUrls) ? imageUrls.filter(Boolean) : [];
+            updateData.imageUrls = normalizedImageUrls;
+            updateData.imageUrl = Object.prototype.hasOwnProperty.call(req.body, 'imageUrl')
+                ? imageUrl
+                : normalizedImageUrls[0] || null;
+        } else if (Object.prototype.hasOwnProperty.call(req.body, 'imageUrl')) {
+            updateData.imageUrl = imageUrl;
+        }
 
         const article = await Article.findOneAndUpdate(
             { _id: req.params.id, userId: req.user._id },
-            {
-                title,
-                content,
-                topic,
-                purpose,
-                imageUrl: imageUrl || normalizedImageUrls[0],
-                imageUrls: normalizedImageUrls,
-                hashtags,
-                status
-            },
+            updateData,
             { new: true, runValidators: true }
         );
 

@@ -7,6 +7,7 @@ const geminiService = require('../services/gemini');
 const { getModelForTask } = require('../services/gemini/modelConfig.service');
 const Article = require('../models/Article');
 const { AISettings } = require('../models');
+const { logPromptDebug } = require('../utils/promptDebug');
 
 /**
  * Generate article with AI
@@ -14,13 +15,45 @@ const { AISettings } = require('../models');
  */
 exports.generateArticle = async (req, res) => {
     try {
-        const { mode, topic, purpose, description, wordCount = 250, imageUrl, imageUrls, useBrandSettings } = req.body;
+        const {
+            mode,
+            topic,
+            purpose,
+            description,
+            wordCount = 250,
+            imageUrl,
+            imageUrls,
+            useBrandSettings,
+            writingStyle,
+            storytellingDepth,
+            baseTitle,
+            baseContent,
+            regenerateInstruction
+        } = req.body;
+
+        logPromptDebug({
+            tool: 'article',
+            step: 'received-input',
+            data: {
+                mode,
+                topic,
+                purpose,
+                wordCount,
+                useBrandSettings,
+                writingStyle,
+                storytellingDepth,
+                hasDescription: !!description,
+                hasBaseContent: !!baseContent,
+                imageUrl,
+                imageUrls
+            }
+        });
 
         // Validate required fields
-        if (!topic || !purpose || !description) {
+        if (!topic || !purpose || (!description && !baseContent)) {
             return res.status(400).json({
                 success: false,
-                message: 'Vui lòng điền đầy đủ thông tin: topic, purpose, description'
+                message: 'Vui lòng điền đầy đủ thông tin: topic, purpose và (description hoặc baseContent)'
             });
         }
 
@@ -28,8 +61,22 @@ exports.generateArticle = async (req, res) => {
         let brandContext = null;
         if (useBrandSettings) {
             const aiSettings = await AISettings.findOne({ userId: req.user._id });
-            brandContext = geminiService.buildBrandContext(aiSettings);
+            try {
+                brandContext = await geminiService.buildRichBrandContext(aiSettings);
+            } catch (error) {
+                brandContext = geminiService.buildBrandContext(aiSettings);
+            }
         }
+
+        logPromptDebug({
+            tool: 'article',
+            step: 'brand-context',
+            data: {
+                enabled: !!useBrandSettings,
+                available: !!brandContext,
+                preview: brandContext
+            }
+        });
 
         // Get user's selected model
         const textModel = await getModelForTask('text', req.user._id);
@@ -42,6 +89,22 @@ exports.generateArticle = async (req, res) => {
                 ? [imageUrl]
                 : [];
 
+        logPromptDebug({
+            tool: 'article',
+            step: 'prompt-built',
+            data: {
+                mode,
+                selectedModel: textModel,
+                topic,
+                purpose,
+                wordCount,
+                writingStyle,
+                storytellingDepth,
+                normalizedImageUrls,
+                hasRegenerateInstruction: !!regenerateInstruction
+            }
+        });
+
         if (mode === 'manual' && normalizedImageUrls.length > 0) {
             // Manual mode with uploaded image
             result = await geminiService.generateArticleWithImage({
@@ -51,6 +114,11 @@ exports.generateArticle = async (req, res) => {
                 wordCount,
                 imagePath: normalizedImageUrls[0],
                 brandContext,
+                writingStyle,
+                storytellingDepth,
+                baseTitle,
+                baseContent,
+                regenerateInstruction,
                 modelName: textModel
             });
             // Keep the user's uploaded image
@@ -65,6 +133,11 @@ exports.generateArticle = async (req, res) => {
                 wordCount,
                 imagePath: normalizedImageUrls[0],
                 brandContext,
+                writingStyle,
+                storytellingDepth,
+                baseTitle,
+                baseContent,
+                regenerateInstruction,
                 modelName: textModel
             });
             // Keep pre-generated image URL
@@ -78,6 +151,11 @@ exports.generateArticle = async (req, res) => {
                 description,
                 wordCount,
                 brandContext,
+                writingStyle,
+                storytellingDepth,
+                baseTitle,
+                baseContent,
+                regenerateInstruction,
                 modelName: textModel
             });
         } else {
@@ -88,6 +166,11 @@ exports.generateArticle = async (req, res) => {
                 description,
                 wordCount,
                 brandContext,
+                writingStyle,
+                storytellingDepth,
+                baseTitle,
+                baseContent,
+                regenerateInstruction,
                 modelName: textModel
             });
         }
@@ -104,7 +187,27 @@ exports.generateArticle = async (req, res) => {
                 imagePrompt: result.imagePrompt || null
             }
         });
+
+        logPromptDebug({
+            tool: 'article',
+            step: 'ai-response',
+            data: {
+                ok: true,
+                title: result?.title,
+                hasContent: !!result?.content,
+                hashtagsCount: Array.isArray(result?.hashtags) ? result.hashtags.length : 0,
+                imageUrl: result?.imageUrl || null
+            }
+        });
     } catch (error) {
+        logPromptDebug({
+            tool: 'article',
+            step: 'ai-response-error',
+            data: {
+                message: error?.message,
+                stack: error?.stack
+            }
+        });
         console.error('Generate article error:', error);
         res.status(500).json({
             success: false,
@@ -119,13 +222,46 @@ exports.generateArticle = async (req, res) => {
  */
 exports.generateAndSaveArticle = async (req, res) => {
     try {
-        const { mode, topic, purpose, description, wordCount = 250, imageUrl, imageUrls, useBrandSettings } = req.body;
+        const {
+            mode,
+            topic,
+            purpose,
+            description,
+            wordCount = 250,
+            imageUrl,
+            imageUrls,
+            useBrandSettings,
+            writingStyle,
+            storytellingDepth,
+            baseTitle,
+            baseContent,
+            regenerateInstruction
+        } = req.body;
+
+        logPromptDebug({
+            tool: 'article',
+            step: 'received-input',
+            data: {
+                mode,
+                topic,
+                purpose,
+                wordCount,
+                useBrandSettings,
+                writingStyle,
+                storytellingDepth,
+                hasDescription: !!description,
+                hasBaseContent: !!baseContent,
+                imageUrl,
+                imageUrls,
+                saveMode: true
+            }
+        });
 
         // Validate required fields
-        if (!topic || !purpose || !description) {
+        if (!topic || !purpose || (!description && !baseContent)) {
             return res.status(400).json({
                 success: false,
-                message: 'Vui lòng điền đầy đủ thông tin'
+                message: 'Vui lòng điền đầy đủ thông tin: topic, purpose và (description hoặc baseContent)'
             });
         }
 
@@ -133,8 +269,22 @@ exports.generateAndSaveArticle = async (req, res) => {
         let brandContext = null;
         if (useBrandSettings) {
             const aiSettings = await AISettings.findOne({ userId: req.user._id });
-            brandContext = geminiService.buildBrandContext(aiSettings);
+            try {
+                brandContext = await geminiService.buildRichBrandContext(aiSettings);
+            } catch (error) {
+                brandContext = geminiService.buildBrandContext(aiSettings);
+            }
         }
+
+        logPromptDebug({
+            tool: 'article',
+            step: 'brand-context',
+            data: {
+                enabled: !!useBrandSettings,
+                available: !!brandContext,
+                preview: brandContext
+            }
+        });
 
         // Get user's selected model
         const textModel = await getModelForTask('text', req.user._id);
@@ -147,6 +297,23 @@ exports.generateAndSaveArticle = async (req, res) => {
                 ? [imageUrl]
                 : [];
 
+        logPromptDebug({
+            tool: 'article',
+            step: 'prompt-built',
+            data: {
+                mode,
+                selectedModel: textModel,
+                topic,
+                purpose,
+                wordCount,
+                writingStyle,
+                storytellingDepth,
+                normalizedImageUrls,
+                hasRegenerateInstruction: !!regenerateInstruction,
+                saveMode: true
+            }
+        });
+
         if (mode === 'manual' && normalizedImageUrls.length > 0) {
             result = await geminiService.generateArticleWithImage({
                 topic,
@@ -155,6 +322,11 @@ exports.generateAndSaveArticle = async (req, res) => {
                 wordCount,
                 imagePath: normalizedImageUrls[0],
                 brandContext,
+                writingStyle,
+                storytellingDepth,
+                baseTitle,
+                baseContent,
+                regenerateInstruction,
                 modelName: textModel
             });
             result.imageUrl = normalizedImageUrls[0];
@@ -167,6 +339,11 @@ exports.generateAndSaveArticle = async (req, res) => {
                 wordCount,
                 imagePath: normalizedImageUrls[0],
                 brandContext,
+                writingStyle,
+                storytellingDepth,
+                baseTitle,
+                baseContent,
+                regenerateInstruction,
                 modelName: textModel
             });
             result.imageUrl = normalizedImageUrls[0];
@@ -178,6 +355,11 @@ exports.generateAndSaveArticle = async (req, res) => {
                 description,
                 wordCount,
                 brandContext,
+                writingStyle,
+                storytellingDepth,
+                baseTitle,
+                baseContent,
+                regenerateInstruction,
                 modelName: textModel
             });
         } else {
@@ -187,6 +369,11 @@ exports.generateAndSaveArticle = async (req, res) => {
                 description,
                 wordCount,
                 brandContext,
+                writingStyle,
+                storytellingDepth,
+                baseTitle,
+                baseContent,
+                regenerateInstruction,
                 modelName: textModel
             });
         }
@@ -219,7 +406,28 @@ exports.generateAndSaveArticle = async (req, res) => {
                 }
             }
         });
+
+        logPromptDebug({
+            tool: 'article',
+            step: 'ai-response',
+            data: {
+                ok: true,
+                articleId: article?._id,
+                title: result?.title,
+                hashtagsCount: Array.isArray(result?.hashtags) ? result.hashtags.length : 0,
+                imageUrl: result?.imageUrl || null
+            }
+        });
     } catch (error) {
+        logPromptDebug({
+            tool: 'article',
+            step: 'ai-response-error',
+            data: {
+                message: error?.message,
+                stack: error?.stack,
+                saveMode: true
+            }
+        });
         console.error('Generate and save article error:', error);
         res.status(500).json({
             success: false,
@@ -235,6 +443,17 @@ exports.generateAndSaveArticle = async (req, res) => {
 exports.analyzeImage = async (req, res) => {
     try {
         const { imagePath, imageUrl, customPrompt } = req.body;
+
+        logPromptDebug({
+            tool: 'article',
+            step: 'received-input',
+            data: {
+                mode: 'analyze-image',
+                imagePath,
+                imageUrl,
+                customPrompt
+            }
+        });
 
         // Validate - need either imagePath or imageUrl
         if (!imagePath && !imageUrl) {
@@ -256,6 +475,26 @@ exports.analyzeImage = async (req, res) => {
             analysis = await geminiService.analyzeImage(imagePath, customPrompt, visionModel);
         }
 
+        logPromptDebug({
+            tool: 'article',
+            step: 'prompt-built',
+            data: {
+                mode: 'analyze-image',
+                modelName: visionModel,
+                hasCustomPrompt: !!customPrompt
+            }
+        });
+
+        logPromptDebug({
+            tool: 'article',
+            step: 'ai-response',
+            data: {
+                mode: 'analyze-image',
+                modelName: visionModel,
+                analysisPreview: analysis
+            }
+        });
+
         res.status(200).json({
             success: true,
             message: 'Phân tích ảnh thành công',
@@ -265,6 +504,15 @@ exports.analyzeImage = async (req, res) => {
             }
         });
     } catch (error) {
+        logPromptDebug({
+            tool: 'article',
+            step: 'ai-response-error',
+            data: {
+                mode: 'analyze-image',
+                message: error?.message,
+                stack: error?.stack
+            }
+        });
         console.error('Analyze image error:', error);
         res.status(500).json({
             success: false,

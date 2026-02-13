@@ -26,7 +26,8 @@ const articleSchema = new mongoose.Schema({
     purpose: {
         type: String,
         required: [true, 'Mục đích là bắt buộc'],
-        enum: ['introduce', 'sell', 'share_knowledge']
+        trim: true,
+        maxlength: [200, 'Mục đích không được quá 200 ký tự']
     },
     imageUrl: {
         type: String,

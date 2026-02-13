@@ -96,6 +96,37 @@ const MarketingPlanSchema = new mongoose.Schema({
         default: '',
         trim: true
     },
+
+    // Campaign-thinking inputs (optional)
+    priorityProductService: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    monthlyFocus: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    promotions: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    customerJourneyStage: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    targetSegment: {
+        type: String,
+        trim: true,
+        default: ''
+    },
+    strategySuggestion: {
+        type: mongoose.Schema.Types.Mixed,
+        default: ''
+    },
     
     // AI Settings toggle
     useBrandSettings: { 
