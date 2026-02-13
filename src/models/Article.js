@@ -43,7 +43,7 @@ const articleSchema = new mongoose.Schema({
     }],
     status: {
         type: String,
-        enum: ['draft', 'published'],
+        enum: ['processing', 'failed', 'draft', 'published'],
         default: 'draft'
     }
 }, {

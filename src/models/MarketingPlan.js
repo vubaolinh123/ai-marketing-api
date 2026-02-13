@@ -147,7 +147,7 @@ const MarketingPlanSchema = new mongoose.Schema({
     // Plan status
     status: { 
         type: String, 
-        enum: ['active', 'completed', 'draft'], 
+        enum: ['processing', 'failed', 'active', 'completed', 'draft'], 
         default: 'active' 
     }
 }, { 

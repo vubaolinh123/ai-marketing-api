@@ -36,6 +36,7 @@ async function resolveBrandContext(userId, useBrandSettings) {
  * POST /api/video-scripts/generate
  */
 exports.generateScript = async (req, res) => {
+    let processingScript = null;
     try {
         const { 
             title, 
@@ -96,6 +97,25 @@ exports.generateScript = async (req, res) => {
 
         const textModel = await getModelForTask('text', req.user._id);
 
+        // Create placeholder before AI generation
+        processingScript = await VideoScript.create({
+            userId: req.user._id,
+            title,
+            duration,
+            requestedSceneCount: sceneCount || 6,
+            size,
+            hasVoiceOver,
+            summary: 'Đang tạo kịch bản bằng AI...',
+            scenes: [],
+            otherRequirements,
+            ideaMode,
+            videoGoal: videoGoal || '',
+            targetAudience: targetAudience || '',
+            featuredProductService: featuredProductService || '',
+            selectedConceptTitle: selectedConceptTitle || '',
+            status: 'processing'
+        });
+
         // Generate script with AI
         const result = await geminiService.generateVideoScript({
             input: {
@@ -126,23 +146,14 @@ exports.generateScript = async (req, res) => {
             }
         });
 
-        // Save to database
-        const videoScript = await VideoScript.create({
-            userId: req.user._id,
-            title,
-            duration,
-            requestedSceneCount: sceneCount || 6,
-            size,
-            hasVoiceOver,
+        // Update placeholder with generated content
+        const videoScript = await VideoScript.findByIdAndUpdate(processingScript._id, {
             summary: result.summary,
             scenes: result.scenes,
-            otherRequirements,
-            ideaMode,
-            videoGoal: videoGoal || '',
-            targetAudience: targetAudience || '',
-            featuredProductService: featuredProductService || '',
-            selectedConceptTitle: selectedConceptTitle || '',
             status: 'completed'
+        }, {
+            new: true,
+            runValidators: true
         });
 
         res.status(201).json({
@@ -151,6 +162,16 @@ exports.generateScript = async (req, res) => {
             data: videoScript
         });
     } catch (error) {
+        if (processingScript?._id) {
+            try {
+                await VideoScript.findByIdAndUpdate(processingScript._id, {
+                    status: 'failed'
+                });
+            } catch (updateError) {
+                console.error('Failed to update video script status to failed:', updateError);
+            }
+        }
+
         logPromptDebug({
             tool: 'video',
             step: 'ai-response-error',

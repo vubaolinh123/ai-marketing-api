@@ -221,6 +221,7 @@ exports.generateArticle = async (req, res) => {
  * POST /api/ai/generate-and-save
  */
 exports.generateAndSaveArticle = async (req, res) => {
+    let processingArticle = null;
     try {
         const {
             mode,
@@ -296,6 +297,19 @@ exports.generateAndSaveArticle = async (req, res) => {
             : imageUrl
                 ? [imageUrl]
                 : [];
+
+        // Create placeholder article before AI generation
+        processingArticle = await Article.create({
+            userId: req.user._id,
+            title: `Đang tạo bài viết: ${topic}`.slice(0, 500),
+            content: 'Đang tạo nội dung bằng AI...',
+            topic,
+            purpose,
+            imageUrl: normalizedImageUrls[0] || null,
+            imageUrls: normalizedImageUrls,
+            hashtags: [],
+            status: 'processing'
+        });
 
         logPromptDebug({
             tool: 'article',
@@ -378,9 +392,8 @@ exports.generateAndSaveArticle = async (req, res) => {
             });
         }
 
-        // Save to database
-        const article = await Article.create({
-            userId: req.user._id,
+        // Update placeholder with generated content
+        const article = await Article.findByIdAndUpdate(processingArticle._id, {
             title: result.title,
             content: result.content,
             topic,
@@ -389,6 +402,9 @@ exports.generateAndSaveArticle = async (req, res) => {
             imageUrls: result.imageUrls || (result.imageUrl ? [result.imageUrl] : []),
             hashtags: result.hashtags || [],
             status: 'draft'
+        }, {
+            new: true,
+            runValidators: true
         });
 
         res.status(201).json({
@@ -419,6 +435,16 @@ exports.generateAndSaveArticle = async (req, res) => {
             }
         });
     } catch (error) {
+        if (processingArticle?._id) {
+            try {
+                await Article.findByIdAndUpdate(processingArticle._id, {
+                    status: 'failed'
+                });
+            } catch (updateError) {
+                console.error('Failed to update article status to failed:', updateError);
+            }
+        }
+
         logPromptDebug({
             tool: 'article',
             step: 'ai-response-error',

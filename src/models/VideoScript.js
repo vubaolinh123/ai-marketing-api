@@ -109,7 +109,7 @@ const VideoScriptSchema = new mongoose.Schema({
     // Status
     status: {
         type: String,
-        enum: ['draft', 'completed'],
+        enum: ['processing', 'failed', 'draft', 'completed'],
         default: 'draft'
     }
 }, {

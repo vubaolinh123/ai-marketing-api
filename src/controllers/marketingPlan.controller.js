@@ -49,6 +49,7 @@ function normalizeStrategySuggestionInput(strategySuggestion) {
  * POST /api/marketing-plan/generate
  */
 exports.generateMarketingPlan = async (req, res) => {
+    let processingPlan = null;
     try {
         const {
             campaignName,
@@ -168,20 +169,8 @@ exports.generateMarketingPlan = async (req, res) => {
             strategySuggestion: normalizedStrategySuggestion
         };
 
-        // Generate plan with AI
-        const posts = await geminiService.generateMarketingPlan(input, brandContext, textModel);
-
-        logPromptDebug({
-            tool: 'marketing',
-            step: 'ai-response',
-            data: {
-                modelName: textModel,
-                totalPosts: posts?.length || 0
-            }
-        });
-
-        // Save to database
-        const plan = await MarketingPlan.create({
+        // Create placeholder before AI generation
+        processingPlan = await MarketingPlan.create({
             userId: req.user._id,
             campaignName,
             startDate: new Date(startDate),
@@ -199,9 +188,31 @@ exports.generateMarketingPlan = async (req, res) => {
             targetSegment: input.targetSegment,
             strategySuggestion: input.strategySuggestion,
             useBrandSettings: !!useBrandSettings,
+            posts: [],
+            totalPosts: 0,
+            status: 'processing'
+        });
+
+        // Generate plan with AI
+        const posts = await geminiService.generateMarketingPlan(input, brandContext, textModel);
+
+        logPromptDebug({
+            tool: 'marketing',
+            step: 'ai-response',
+            data: {
+                modelName: textModel,
+                totalPosts: posts?.length || 0
+            }
+        });
+
+        // Update placeholder with generated output
+        const plan = await MarketingPlan.findByIdAndUpdate(processingPlan._id, {
             posts,
             totalPosts: posts.length,
             status: 'active'
+        }, {
+            new: true,
+            runValidators: true
         });
 
         res.status(201).json({
@@ -218,6 +229,16 @@ exports.generateMarketingPlan = async (req, res) => {
             }
         });
     } catch (error) {
+        if (processingPlan?._id) {
+            try {
+                await MarketingPlan.findByIdAndUpdate(processingPlan._id, {
+                    status: 'failed'
+                });
+            } catch (updateError) {
+                console.error('Failed to update marketing plan status to failed:', updateError);
+            }
+        }
+
         logPromptDebug({
             tool: 'marketing',
             step: 'ai-response-error',
