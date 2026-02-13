@@ -22,3 +22,7 @@ Thumbs.db
 # Build
 dist/
 build/
+
+# AI generated images/uploads
+uploads/images/ai-images/
+uploads/images/product-images/
