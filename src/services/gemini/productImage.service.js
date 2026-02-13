@@ -9,7 +9,6 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const sharp = require('sharp');
 const { genAI, getModel, MODELS, parseJsonResponse } = require('./gemini.config');
-const { injectBrandContextToPrompt } = require('./brandContext.service');
 const { composePromptBlocks } = require('./prompt-modules/shared/composer');
 const { buildCreativeInputBlock, normalizeCreativeInputs } = require('./prompt-modules/image/creativeInput.module');
 const { buildFnbPhotorealGuardrails } = require('./prompt-modules/image/fnbPhotoreal.module');
@@ -101,6 +100,316 @@ function toInlineDataPart(filePath) {
     };
 }
 
+function normalizeText(value) {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/Đ/g, 'd')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function matchAnyKeyword(text, keywords = []) {
+    const normalizedText = normalizeText(text);
+
+    return keywords.some((keyword) => {
+        const normalizedKeyword = normalizeText(keyword);
+        if (!normalizedKeyword) return false;
+
+        const escaped = normalizedKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const pattern = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`);
+        return pattern.test(normalizedText);
+    });
+}
+
+function buildIntentSignals({
+    backgroundType,
+    customBackground,
+    additionalNotes,
+    usagePurpose,
+    displayInfo,
+    visualStyle,
+    productAnalysis
+} = {}) {
+    const normalizedBackgroundType = normalizeText(backgroundType);
+
+    const userIntentText = normalizeText([
+        backgroundType,
+        customBackground,
+        additionalNotes,
+        usagePurpose,
+        displayInfo,
+        visualStyle
+    ].filter(Boolean).join(' '));
+
+    const normalizedText = userIntentText;
+
+    const wantsOutdoor = normalizedBackgroundType === 'outdoor' || matchAnyKeyword(normalizedText, [
+        'outdoor', 'outside', 'open air', 'nature', 'natural park', 'street', 'garden', 'beach', 'sunlight',
+        'ngoai troi', 'ngoai canh', 'thien nhien', 'cong vien', 'duong pho', 'san vuon', 'bo bien', 'anh sang tu nhien'
+    ]);
+
+    const explicitNoHumanPresence = matchAnyKeyword(userIntentText, [
+        'no people', 'without people', 'without person', 'no human', 'no hands',
+        'khong nguoi', 'khong co nguoi', 'khong ban tay'
+    ]);
+
+    const wantsHumanPresenceRaw = matchAnyKeyword(normalizedText, [
+        'human interaction', 'people interacting', 'person', 'people', 'hands', 'holding', 'using', 'diner', 'customer', 'server', 'chef',
+        'co nguoi', 'con nguoi', 'tuong tac', 'ban tay', 'cam tren tay', 'su dung', 'thuc khach', 'khach hang', 'phuc vu', 'dau bep'
+    ]);
+
+    const wantsEatingAction = matchAnyKeyword(normalizedText, [
+        'eat', 'eating', 'bite', 'biting', 'taste', 'tasting', 'consume', 'consuming',
+        'thuong thuc', 'an uong', 'nham nhi', 'dang an', 'dang uong', 'nguoi an', 'nguoi uong'
+    ]);
+
+    const wantsDrinkingAction = matchAnyKeyword(normalizedText, [
+        'drink', 'drinking', 'sip', 'sipping', 'beverage', 'cocktail', 'coffee drinking',
+        'uong', 'dang uong', 'nham nhi', 'thuong thuc do uong'
+    ]);
+
+    const wantsCookingAction = matchAnyKeyword(normalizedText, [
+        'cook', 'cooking', 'prepare', 'preparing', 'grill', 'grilling', 'fry', 'frying', 'roast', 'roasting', 'bake', 'baking', 'boil', 'boiling', 'plate', 'plating',
+        'nau', 'nau nuong', 'che bien', 'nuong', 'ran', 'chien', 'xao', 'hap', 'dau bep', 'phuc vu mon'
+    ]);
+
+    const wantsServingAction = matchAnyKeyword(normalizedText, [
+        'serve', 'serving', 'presentation', 'plated service', 'table service',
+        'phuc vu', 'bay mon', 'mang mon', 'don mon'
+    ]);
+
+    const wantsUseAction = matchAnyKeyword(normalizedText, [
+        'use', 'using', 'in use', 'hands-on', 'demonstration', 'actively used',
+        'su dung', 'dang su dung', 'trai nghiem'
+    ]);
+
+    const backgroundSuggestsAction = normalizedBackgroundType === 'action';
+    const wantsAction = backgroundSuggestsAction || wantsEatingAction || wantsDrinkingAction || wantsCookingAction || wantsServingAction || wantsUseAction;
+
+    let actionType = 'none';
+    if (wantsEatingAction) actionType = 'eat';
+    else if (wantsDrinkingAction) actionType = 'drink';
+    else if (wantsCookingAction) actionType = 'cook';
+    else if (wantsServingAction) actionType = 'serve';
+    else if (wantsUseAction || backgroundSuggestsAction) actionType = 'use';
+
+    const wantsHumanPresence = !explicitNoHumanPresence && (
+        wantsHumanPresenceRaw
+        || normalizedBackgroundType === 'lifestyle'
+        || (wantsAction && actionType !== 'none')
+    );
+
+    const isStylizedExplicit = matchAnyKeyword(userIntentText, [
+        'anime', 'cartoon', 'chibi', 'illustration', '2d', 'lofi', 'manga', 'comic'
+    ]);
+
+    const isPhotorealPriority = matchAnyKeyword(userIntentText, [
+        'photoreal', 'photo realistic', 'realistic', 'hyperreal', 'true to life', 'commercial photography',
+        'chan thuc', 'nhu that', 'anh that', 'thuc te'
+    ]) || !isStylizedExplicit;
+
+    const requestedSceneSummary = [
+        backgroundType ? `Background=${backgroundType}` : 'Background=studio',
+        customBackground ? `Custom=${customBackground}` : null,
+        usagePurpose ? `Purpose=${usagePurpose}` : null,
+        displayInfo ? `Display=${displayInfo}` : null,
+        visualStyle ? `Style=${visualStyle}` : null,
+        additionalNotes ? `Notes=${additionalNotes}` : null,
+        productAnalysis?.productType ? `Product=${productAnalysis.productType}` : null
+    ].filter(Boolean).join(' | ').slice(0, 700);
+
+    return {
+        wantsOutdoor,
+        wantsHumanPresence,
+        wantsAction,
+        actionType,
+        requestedSceneSummary,
+        wantsEatingAction,
+        wantsDrinkingAction,
+        wantsCookingAction,
+        wantsServingAction,
+        wantsUseAction,
+        wantsHumanInteraction: wantsHumanPresence,
+        isPhotorealPriority
+    };
+}
+
+function sanitizeBrandContextForImagePrompt(brandContext, { visualStyle, additionalNotes } = {}) {
+    const rawContext = typeof brandContext === 'string' ? brandContext : '';
+    const originalLength = rawContext.length;
+
+    if (!rawContext.trim()) {
+        return {
+            sanitizedContext: '',
+            removedSignals: [],
+            originalLength,
+            finalLength: 0
+        };
+    }
+
+    const maxLength = 1200;
+    const noisySignals = [
+        'anime', 'lofi', 'cartoon', 'chibi', 'illustration', '2d', 'comic', 'manga', 'pixel art',
+        'cell shading', 'vector style', 'flat design', 'watercolor', 'oil painting', 'sketch'
+    ];
+
+    const userStyleText = normalizeText([visualStyle, additionalNotes].filter(Boolean).join(' '));
+    const explicitlyRequestedSignals = new Set(
+        noisySignals.filter((signal) => matchAnyKeyword(userStyleText, [signal]))
+    );
+
+    const removedSignals = new Set();
+    const filteredLines = rawContext
+        .split(/\r?\n+/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+            let sanitizedLine = line;
+            const normalizedLine = normalizeText(line);
+
+            for (const signal of noisySignals) {
+                if (explicitlyRequestedSignals.has(signal)) continue;
+
+                const normalizedSignal = normalizeText(signal);
+                if (normalizedLine.includes(normalizedSignal)) {
+                    removedSignals.add(signal);
+                    const escaped = signal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const regex = new RegExp(escaped, 'ig');
+                    sanitizedLine = sanitizedLine.replace(regex, '');
+                }
+            }
+
+            sanitizedLine = sanitizedLine
+                .replace(/[\s,;:|/-]{2,}/g, ' ')
+                .replace(/\s+\./g, '.')
+                .trim();
+
+            return sanitizedLine;
+        })
+        .filter((line) => /[a-z0-9]/i.test(line));
+
+    let sanitizedContext = filteredLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    if (sanitizedContext.length > maxLength) {
+        sanitizedContext = `${sanitizedContext.slice(0, maxLength).trim()}...`;
+    }
+
+    return {
+        sanitizedContext,
+        removedSignals: Array.from(removedSignals),
+        originalLength,
+        finalLength: sanitizedContext.length
+    };
+}
+
+function buildDeterministicHardNegativeRules(intentSignals = {}) {
+    const {
+        wantsOutdoor,
+        wantsHumanPresence,
+        wantsAction,
+        actionType,
+        isPhotorealPriority
+    } = intentSignals;
+
+    const rules = [
+        'Do not alter product identity: shape, material, colors, packaging details, logos, and label marks must stay consistent.',
+        'Do not replace the product with another variant, ingredient set, or unrelated object.',
+        'Do not generate text overlays, watermarks, or AI-invented brand marks.'
+    ];
+
+    if (isPhotorealPriority) {
+        rules.push('Do not apply stylized filters, surreal grading, or non-photoreal rendering.');
+    }
+
+    if (!wantsOutdoor) {
+        rules.push('Do not force outdoor scenery when user intent does not request it.');
+    }
+
+    if (!wantsHumanPresence) {
+        rules.push('Do not add people or hand interaction unless explicitly requested by user intent.');
+    }
+
+    if (!wantsAction) {
+        rules.push('Do not depict action or active product usage unless explicitly requested by user intent.');
+    } else if (actionType && actionType !== 'none') {
+        rules.push(`Do not depict actions unrelated to "${actionType}" when action is requested.`);
+    }
+
+    return rules;
+}
+
+function sanitizeHardNegativeRules(rules = [], intentSignals = {}) {
+    const {
+        wantsOutdoor,
+        wantsHumanPresence,
+        wantsAction,
+        actionType
+    } = intentSignals;
+
+    const sourceRules = Array.isArray(rules) ? rules : [];
+    const dedup = new Set();
+
+    return sourceRules
+        .map((rule) => String(rule || '').trim())
+        .filter(Boolean)
+        .filter((rule) => {
+            const normalizedRule = normalizeText(rule);
+
+            const blocksOutdoor = /(do not|never|avoid).*(outdoor|outside|nature|daylight)/.test(normalizedRule);
+            if (wantsOutdoor && blocksOutdoor) return false;
+
+            const blocksHuman = /(do not|never|avoid).*(people|person|human|hands|model|customer|chef|server)/.test(normalizedRule);
+            if (wantsHumanPresence && blocksHuman) return false;
+
+            const blocksAction = /(do not|never|avoid).*(action|using|usage|eat|drink|cook|serve)/.test(normalizedRule)
+                && !/(unrelated|except|other than)/.test(normalizedRule);
+            if (wantsAction && blocksAction) return false;
+
+            if (wantsAction && actionType && actionType !== 'none') {
+                const blocksRequestedAction =
+                    (actionType === 'eat' && /(do not|never|avoid).*(eat|eating|bite|consume)/.test(normalizedRule))
+                    || (actionType === 'drink' && /(do not|never|avoid).*(drink|drinking|sip|beverage)/.test(normalizedRule))
+                    || (actionType === 'cook' && /(do not|never|avoid).*(cook|cooking|prepare|grill|fry|bake)/.test(normalizedRule))
+                    || (actionType === 'serve' && /(do not|never|avoid).*(serve|serving|plated|presentation)/.test(normalizedRule))
+                    || (actionType === 'use' && /(do not|never|avoid).*(use|using|hands on|demonstration)/.test(normalizedRule));
+
+                if (blocksRequestedAction) return false;
+            }
+
+            if (dedup.has(normalizedRule)) return false;
+            dedup.add(normalizedRule);
+            return true;
+        });
+}
+
+function buildUserSceneIntentBlock(intentSignals = {}) {
+    const {
+        wantsOutdoor,
+        wantsHumanPresence,
+        wantsAction,
+        actionType,
+        requestedSceneSummary
+    } = intentSignals;
+
+    const lines = [
+        requestedSceneSummary ? `Requested scene summary: ${requestedSceneSummary}` : 'Requested scene summary: follow user context for this generation.',
+        wantsOutdoor
+            ? 'Outdoor intent: REQUIRED. Build believable outdoor depth and natural light.'
+            : 'Outdoor intent: NOT requested. Keep non-outdoor context unless explicitly requested.',
+        wantsHumanPresence
+            ? 'Human presence intent: ALLOWED/REQUESTED. Include natural interaction while preserving full product recognizability.'
+            : 'Human presence intent: NOT requested. Keep scene free of people and hands unless explicitly requested.',
+        wantsAction
+            ? `Action intent: REQUESTED (${actionType || 'use'}). Keep action natural and subordinate to product identity.`
+            : 'Action intent: NOT requested. Keep scene static and product-focused.',
+        'Conflict rule: do not preserve original reference background when it conflicts with this USER SCENE INTENT.'
+    ].filter(Boolean);
+
+    return lines.map((line) => `- ${line}`).join('\n');
+}
+
 function buildIdentityAnchor(productAnalysis = {}) {
     const colors = Array.isArray(productAnalysis.colors) && productAnalysis.colors.length > 0
         ? productAnalysis.colors.join(', ')
@@ -117,87 +426,66 @@ function buildIdentityAnchor(productAnalysis = {}) {
         `Colors: ${colors}`,
         `Patterns/marks: ${productAnalysis.patterns || productAnalysis.brandElements || 'no changes to logos/marks/details'}`,
         `Must-keep features: ${keyFeatures}`,
-        'Identity lock rule: Keep product identity and scene continuity at 80-90% similarity across all angle outputs.',
-        'Allowed variation rule: Only camera viewpoint/framing may vary (10-20% max).'
+        'Identity lock rule: Keep product identity at 90-95% consistency with the original reference across all angles.',
+        'Scene consistency rule: Keep scene coherent with user intent for this generation; never force original reference background if it conflicts with requested scene intent.',
+        'Allowed variation rule: Camera viewpoint/framing and minor natural interaction motion only.'
     ].join('\n');
 }
 
 async function buildConsistentSceneBlueprint(params) {
-    const { productAnalysis, backgroundType, customBackground, additionalNotes, brandContext } = params;
+    const {
+        productAnalysis,
+        backgroundType,
+        customBackground,
+        additionalNotes,
+        usagePurpose,
+        displayInfo,
+        intentSignals = {},
+        brandContext
+    } = params;
     const backgroundDesc = BACKGROUND_DESCRIPTIONS[backgroundType] || BACKGROUND_DESCRIPTIONS.studio;
-    const model = getModel('TEXT');
+    const sceneParts = [
+        `Create one consistent ${backgroundType || 'studio'} product scene (${backgroundDesc}).`,
+        productAnalysis?.summary ? `Preserve product appearance cues from analysis: ${productAnalysis.summary}.` : null,
+        customBackground ? `Primary custom scene direction: ${customBackground}.` : null,
+        usagePurpose ? `Usage purpose cue: ${usagePurpose}.` : null,
+        displayInfo ? `Display presentation cue: ${displayInfo}.` : null,
+        additionalNotes ? `Additional user notes to honor: ${additionalNotes}.` : null,
+        intentSignals.wantsOutdoor
+            ? 'Environment should clearly read as outdoor with natural spatial depth and believable daylight.'
+            : 'Environment should stay aligned with requested non-outdoor context unless user explicitly asks otherwise.',
+        (intentSignals.wantsHumanPresence || intentSignals.wantsAction)
+            ? 'Human interaction is allowed where requested, while keeping the product fully recognizable and primary.'
+            : 'Do not introduce human interaction unless explicitly requested.',
+        intentSignals.wantsAction
+            ? `Requested action type: ${intentSignals.actionType || 'use'} (do not substitute with unrelated action).`
+            : 'No action requested; keep scene static and product-focused.',
+        brandContext ? `Optional low-priority brand context cue: ${brandContext}.` : null
+    ].filter(Boolean);
 
-    const prompt = `You are a senior art director for product photography consistency.
+    const lightingBlueprint = intentSignals.wantsOutdoor
+        ? 'Use consistent natural daylight with coherent shadow direction, realistic contrast, and neutral white balance across all angles.'
+        : (backgroundType === 'kitchen' || backgroundType === 'restaurant' || intentSignals.wantsCookingAction)
+            ? 'Use warm practical ambient lighting balanced by soft key fill to preserve realistic food/product textures and color fidelity across angles.'
+            : 'Use consistent professional photorealistic lighting with stable shadow softness and white balance across all angle outputs.';
 
-Your task: create ONE immutable scene blueprint for a multi-angle image set.
-All outputs must look like the same product in the same scene, where only camera angle changes.
+    const compositionParts = [
+        'Keep product scale, identity cues, and relative placement to key scene elements stable across outputs.',
+        'Only camera viewpoint/framing should vary between angles.',
+        displayInfo ? `Respect display framing requirements: ${displayInfo}.` : null,
+        intentSignals.wantsAction
+            ? 'When action is requested, preserve action continuity without hiding core product identity features.'
+            : null
+    ].filter(Boolean);
 
-CONSTRAINTS:
-- Similarity target across the whole set: 80-90%
-- Allowed variation: 10-20% only (camera viewpoint/framing)
-- Do NOT change product identity, materials, colors, props, or scene style between angles.
+    const deterministicHardNegativeRules = buildDeterministicHardNegativeRules(intentSignals);
+    const hardNegativeRules = sanitizeHardNegativeRules(deterministicHardNegativeRules, intentSignals);
 
-INPUT: PRODUCT ANALYSIS
-${JSON.stringify(productAnalysis, null, 2)}
-
-INPUT: BACKGROUND TYPE
-- Type: ${backgroundType}
-- Description: ${backgroundDesc}
-
-INPUT: CUSTOM BACKGROUND
-${customBackground || '(none)'}
-
-INPUT: ADDITIONAL NOTES
-${additionalNotes || '(none)'}
-
-INPUT: BRAND CONTEXT
-${brandContext || '(none)'}
-
-Return STRICT JSON only:
-{
-  "sceneBlueprint": "120-180 words describing immutable scene setting and props",
-  "lightingBlueprint": "specific lighting setup that must stay consistent",
-  "compositionBlueprint": "composition constraints that stay consistent across angles",
-  "hardNegativeRules": ["rule1", "rule2", "rule3", "rule4", "rule5"]
-}`;
-
-    try {
-        const result = await model.generateContent(prompt);
-        const text = result.response.text();
-        const parsed = parseJsonResponse(text);
-
-        if (parsed && parsed.sceneBlueprint) {
-            return {
-                sceneBlueprint: parsed.sceneBlueprint,
-                lightingBlueprint: parsed.lightingBlueprint || 'soft realistic commercial lighting, consistent across all angles',
-                compositionBlueprint: parsed.compositionBlueprint || 'same scene structure and relative product placement across all angles',
-                hardNegativeRules: Array.isArray(parsed.hardNegativeRules) && parsed.hardNegativeRules.length > 0
-                    ? parsed.hardNegativeRules
-                    : [
-                        'Do not alter product color/material/logo',
-                        'Do not add/remove accessories or ingredients',
-                        'Do not switch to a different product variant',
-                        'Do not change scene style or color grading',
-                        'No text, watermark, or additional branding'
-                    ]
-            };
-        }
-    } catch (error) {
-        console.error('buildConsistentSceneBlueprint error:', error);
-    }
-
-    // Fallback deterministic blueprint
     return {
-        sceneBlueprint: `Create one consistent ${backgroundType} product scene (${backgroundDesc}). Keep the same product setup, props, and environment style for every angle in the set. ${customBackground || ''}`.trim(),
-        lightingBlueprint: 'Use consistent professional photorealistic lighting, shadow softness, and white balance across all angle outputs.',
-        compositionBlueprint: 'Keep product scale, relative position to background elements, and overall styling consistent across outputs. Only camera viewpoint and crop can change.',
-        hardNegativeRules: [
-            'Do not alter product identity, shape, texture, or color',
-            'Do not add/remove core scene elements between angles',
-            'Do not switch to another product or ingredient',
-            'Do not apply different stylistic filters per angle',
-            'No text overlays, logos generated by AI, or watermark'
-        ]
+        sceneBlueprint: sceneParts.join(' '),
+        lightingBlueprint,
+        compositionBlueprint: compositionParts.join(' '),
+        hardNegativeRules
     };
 }
 
@@ -208,6 +496,9 @@ function buildConsistentAnglePrompt(params) {
         cameraAngle,
         outputSize,
         additionalNotes,
+        intentSignals,
+        userSceneIntentBlock,
+        sanitizedBrandContext,
         creativeBlock,
         photorealGuardrails,
         isAnchor,
@@ -234,9 +525,18 @@ function buildConsistentAnglePrompt(params) {
         : 'You are generating a non-anchor angle. Match canonical and original references as closely as possible while changing only viewpoint.';
 
     const negativeRules = (sceneBlueprint.hardNegativeRules || []).map((rule, index) => `${index + 1}. ${rule}`).join('\n');
+    const intentSummary = `outdoor=${intentSignals?.wantsOutdoor ? 'yes' : 'no'}, human=${intentSignals?.wantsHumanPresence ? 'yes' : 'no'}, action=${intentSignals?.wantsAction ? (intentSignals?.actionType || 'yes') : 'no'}`;
 
     return composePromptBlocks([
         `## MULTI-ANGLE PRODUCT IMAGE GENERATION (CONSISTENCY MODE)
+
+### INSTRUCTION PRIORITY
+1) Safety policy
+2) Product identity lock
+3) User scene intent
+4) Multi-angle consistency
+5) Creative context
+6) Brand context (non-conflicting)
 
 ### GOAL
 Generate one image that belongs to the same angle set with high consistency.
@@ -245,6 +545,11 @@ Generate one image that belongs to the same angle set with high consistency.
 
 ### ATTACHED REFERENCE ORDER
 ${attachedReferences}
+
+Reference usage policy:
+- ORIGINAL and CANONICAL references are identity lock sources for product shape/material/colors/labels.
+- PREVIOUS ANGLE reference is continuity support only.
+- Do NOT preserve original reference background when it conflicts with USER SCENE INTENT.
 
 ### ROLE
 ${anchorInstruction}
@@ -261,6 +566,10 @@ ${identityAnchor}
 - Target camera angle: ${cameraAngle}
 - Framing guidance: ${angleDescription}
 
+### USER SCENE INTENT (HIGH PRIORITY)
+${userSceneIntentBlock || '- Follow user scene request while preserving product identity lock.'}
+- Resolved intent signals: ${intentSummary}
+
 ### HARD NEGATIVE RULES
 ${negativeRules}
 
@@ -272,7 +581,10 @@ ${negativeRules}
 
 ### OPTIONAL USER NOTES
 ${additionalNotes || '(none)'}
-${retryInstruction}`,
+${retryInstruction}
+
+### BRAND CONTEXT (LOW PRIORITY)
+${sanitizedBrandContext || '(none)'}`,
         creativeBlock,
         photorealGuardrails
     ]);
@@ -382,141 +694,6 @@ Only return valid JSON.`;
         console.error('analyzeProductImage error:', error);
         throw error;
     }
-}
-
-/**
- * Build merged scene prompt using AI to intelligently combine:
- * 1. Product analysis from image
- * 2. Background type selected by user
- * 3. Custom scene description from user
- * 4. Additional notes from user
- * 5. Brand context from AI Settings
- * 
- * @param {Object} params - All context parameters
- * @returns {Promise<string>} AI-generated merged scene description
- */
-async function buildMergedScenePrompt(params) {
-    const { productAnalysis, backgroundType, cameraAngle, customBackground, outputSize, additionalNotes, brandContext } = params;
-    
-    const model = getModel('TEXT');
-    const sizeInfo = OUTPUT_SIZES[outputSize] || OUTPUT_SIZES['1:1'];
-    const backgroundDesc = BACKGROUND_DESCRIPTIONS[backgroundType] || '';
-    const angleDescription = CAMERA_ANGLE_PROMPTS[cameraAngle] || CAMERA_ANGLE_PROMPTS.wide;
-    
-    // Build the context merging prompt
-    const mergePrompt = `You are a professional creative director for product photography. Your task is to CREATE A DETAILED SCENE DESCRIPTION that merges all the following inputs into ONE cohesive, specific prompt for an AI image generator.
-
-## INPUT 1: PRODUCT ANALYSIS (from uploaded image)
-${JSON.stringify(productAnalysis, null, 2)}
-
-## INPUT 2: BACKGROUND/CONTEXT TYPE SELECTED
-Type: "${backgroundType}"
-Description: "${backgroundDesc}"
-
-## INPUT 3: USER'S CUSTOM SCENE REQUEST
-${customBackground || '(No custom scene specified)'}
-
-## INPUT 4: ADDITIONAL DETAILS FROM USER
-${additionalNotes || '(No additional details)'}
-
-## INPUT 5: BRAND CONTEXT (business type, style)
-${brandContext || '(No brand context provided)'}
-
-## INPUT 6: CAMERA ANGLE / FRAMING
-${cameraAngle || 'wide'} - ${angleDescription}
-
----
-
-## YOUR TASK
-
-Create a SINGLE, DETAILED scene description that:
-
-1. **PRESERVES PRODUCT IDENTITY**: The product must be recognizable as the EXACT same item from the reference image. Mention specific visual features that must be kept (colors, textures, patterns, distinctive characteristics).
-
-2. **TRANSFORMS THE CONTEXT**: Based on the background type and user's requests, describe how the product should appear in the new scene:
-   - If "action" or user mentions "being used/eaten/worn" → Show the product IN ACTION (e.g., steak being cut by a diner, shoes being worn while running)
-   - If "lifestyle" → Show realistic usage with people interacting naturally
-   - If "kitchen/restaurant" and it's food → Show in appropriate culinary setting
-
-3. **INTEGRATES BRAND CONTEXT**: If brand info is provided (e.g., upscale restaurant, tech company), incorporate appropriate setting elements.
-
-4. **BE EXTREMELY SPECIFIC**: Don't be vague. Describe:
-   - WHO is in the scene (if any people)
-   - WHAT they are doing with the product
-   - WHERE the scene takes place (specific setting details)
-   - HOW the product looks (must match original but in new context)
-   - CAMERA FRAMING based on requested angle (${cameraAngle || 'wide'})
-   - LIGHTING and MOOD
-
-## OUTPUT FORMAT
-
-Return ONLY the scene description, no explanations. The description should be detailed enough that an AI image generator can create exactly what you envision. Output should be 150-300 words.
-
-Example output format:
-"A photorealistic image of [specific product description matching original] in [specific scene]. [Person description if applicable] is [action with product]. The setting is [detailed environment description]. [Lighting and mood]. The product maintains its [specific visual features from original - colors, textures, patterns]."`;
-
-    try {
-        const result = await model.generateContent(mergePrompt);
-        const mergedScene = result.response.text().trim();
-
-        logPromptDebug({
-            tool: 'image',
-            step: 'prompt-built',
-            data: {
-                mode: 'scene-merge',
-                cameraAngle,
-                backgroundType,
-                promptPreview: mergePrompt,
-                mergedScenePreview: mergedScene
-            }
-        });
-        
-        // Build final prompt with the merged scene
-        const finalPrompt = `## CREATIVE PRODUCT IMAGE GENERATION
-
-### SCENE TO CREATE
-${mergedScene}
-
-### TECHNICAL REQUIREMENTS
-- Aspect ratio: ${sizeInfo.label} (${sizeInfo.width}x${sizeInfo.height})
-- Camera angle: ${cameraAngle || 'wide'} (${angleDescription})
-- Style: Photorealistic, professional photography quality
-- Resolution: High quality, sharp details
-- NO text, logo, or watermark overlays
-
-### CRITICAL RULES
-1. The product in the new image MUST be visually the same as the reference image (same colors, textures, distinctive features)
-2. Transform the CONTEXT, not the product's appearance
-3. If showing the product in use (cooked food, worn items, etc.), it should still be recognizable as the same product
-4. Natural lighting and shadows appropriate to the scene
-5. Professional composition and framing`;
-
-        return finalPrompt;
-    } catch (error) {
-        console.error('buildMergedScenePrompt error:', error);
-        // Fallback to simple prompt if AI merge fails
-        return buildSimplePrompt(params);
-    }
-}
-
-/**
- * Fallback simple prompt builder (used if AI merge fails)
- */
-function buildSimplePrompt(params) {
-    const { productAnalysis, backgroundType, cameraAngle, outputSize } = params;
-    const sizeInfo = OUTPUT_SIZES[outputSize] || OUTPUT_SIZES['1:1'];
-    const backgroundDesc = BACKGROUND_DESCRIPTIONS[backgroundType] || BACKGROUND_DESCRIPTIONS['studio'];
-    const angleDescription = CAMERA_ANGLE_PROMPTS[cameraAngle] || CAMERA_ANGLE_PROMPTS.wide;
-    
-    return `Create a professional product photo.
-
-PRODUCT: ${productAnalysis.summary || productAnalysis.productType || 'A product'}
-BACKGROUND: ${backgroundDesc}
-ASPECT RATIO: ${sizeInfo.label}
-CAMERA ANGLE: ${cameraAngle || 'wide'} (${angleDescription})
-
-Keep the product exactly as shown in the reference image. Only change the background.
-NO logo or text overlays.`;
 }
 
 /**
@@ -679,12 +856,15 @@ async function generateSingleAngleImage(params) {
         previousAngleImagePath,
         identityAnchor,
         sceneBlueprint,
+        intentSignals,
         cameraAngle,
         useLogo,
         logoPosition,
         logoUrl,
         outputSize,
         additionalNotes,
+        userSceneIntentBlock,
+        sanitizedBrandContext,
         creativeBlock,
         photorealGuardrails,
         isAnchor = false,
@@ -705,6 +885,9 @@ async function generateSingleAngleImage(params) {
         cameraAngle,
         outputSize,
         additionalNotes,
+        intentSignals,
+        userSceneIntentBlock,
+        sanitizedBrandContext,
         creativeBlock,
         photorealGuardrails,
         isAnchor,
@@ -730,10 +913,10 @@ async function generateSingleAngleImage(params) {
     const previousPart = toInlineDataPart(previousAngleImagePath);
 
     const requestPayload = [
-        prompt,
         originalPart,
         canonicalPart,
-        previousPart
+        previousPart,
+        prompt
     ].filter(Boolean);
 
     const result = await imageModel.generateContent(requestPayload);
@@ -838,11 +1021,28 @@ async function generateProductWithBackground(params) {
                 targetAudience,
                 visualStyle,
                 realismPriority,
-                hasBrandContext: !!brandContext
+                hasBrandContext: !!brandContext,
+                brandContextLengthRaw: (brandContext || '').length
             }
         });
 
         const productAnalysis = await analyzeProductImage(originalImagePath);
+
+        const intentSignals = buildIntentSignals({
+            backgroundType,
+            customBackground,
+            additionalNotes,
+            usagePurpose,
+            displayInfo,
+            visualStyle,
+            productAnalysis
+        });
+
+        const brandContextSanitization = sanitizeBrandContextForImagePrompt(brandContext, {
+            visualStyle,
+            additionalNotes
+        });
+        const sanitizedBrandContext = brandContextSanitization.sanitizedContext;
 
         const creativeInputs = normalizeCreativeInputs({
             usagePurpose,
@@ -859,7 +1059,8 @@ async function generateProductWithBackground(params) {
             backgroundType,
             customBackground,
             additionalNotes,
-            brandContext,
+            brandContext: sanitizedBrandContext,
+            intentSignals,
             ...productAnalysis
         });
 
@@ -868,8 +1069,25 @@ async function generateProductWithBackground(params) {
             productAnalysis,
             backgroundType,
             customBackground,
+            usagePurpose,
+            displayInfo,
             additionalNotes,
-            brandContext
+            intentSignals,
+            brandContext: sanitizedBrandContext
+        });
+
+        const userSceneIntentBlock = buildUserSceneIntentBlock(intentSignals);
+
+        logPromptDebug({
+            tool: 'image',
+            step: 'intent-resolution',
+            data: {
+                intentSignals,
+                hardNegativeFinal: sceneBlueprint?.hardNegativeRules || [],
+                brandContextLengthRaw: brandContextSanitization.originalLength,
+                brandContextLengthSanitized: brandContextSanitization.finalLength,
+                removedSignals: brandContextSanitization.removedSignals
+            }
         });
 
         logPromptDebug({
@@ -877,7 +1095,10 @@ async function generateProductWithBackground(params) {
             step: 'brand-context',
             data: {
                 available: !!brandContext,
-                preview: brandContext
+                preview: sanitizedBrandContext,
+                brandContextLengthRaw: brandContextSanitization.originalLength,
+                brandContextLengthSanitized: brandContextSanitization.finalLength,
+                removedSignals: brandContextSanitization.removedSignals
             }
         });
 
@@ -890,7 +1111,11 @@ async function generateProductWithBackground(params) {
                 mode: 'multi-angle-plan',
                 normalizedAngles,
                 identityAnchor,
-                sceneBlueprint
+                sceneBlueprint,
+                intentSignals,
+                userSceneIntentBlock,
+                brandContextLengthRaw: brandContextSanitization.originalLength,
+                brandContextLengthSanitized: brandContextSanitization.finalLength
             }
         });
 
@@ -923,12 +1148,15 @@ async function generateProductWithBackground(params) {
                         previousAngleImagePath,
                         identityAnchor,
                         sceneBlueprint,
+                        intentSignals,
                         cameraAngle,
                         useLogo,
                         logoPosition,
                         logoUrl,
                         outputSize,
                         additionalNotes: angleSpecificNotes,
+                        userSceneIntentBlock,
+                        sanitizedBrandContext,
                         creativeBlock,
                         photorealGuardrails,
                         isAnchor,
@@ -1034,8 +1262,6 @@ function getFilePathFromUrl(urlPath) {
 
 module.exports = {
     analyzeProductImage,
-    buildMergedScenePrompt,
-    buildSimplePrompt,
     generateProductWithBackground,
     generateSingleAngleImage,
     normalizeCameraAngles,
