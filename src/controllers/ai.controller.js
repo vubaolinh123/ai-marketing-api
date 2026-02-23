@@ -7,6 +7,7 @@ const geminiService = require('../services/gemini');
 const { getModelForTask } = require('../services/gemini/modelConfig.service');
 const Article = require('../models/Article');
 const { AISettings } = require('../models');
+const { resolveArticlePurpose } = require('../utils/articlePurpose');
 const { logPromptDebug } = require('../utils/promptDebug');
 
 /**
@@ -57,6 +58,9 @@ exports.generateArticle = async (req, res) => {
             });
         }
 
+        const purposeEnumValues = Article.schema.path('purpose')?.enumValues || [];
+        const { promptValue: purposeForPrompt } = resolveArticlePurpose(purpose, purposeEnumValues);
+
         // Fetch brand context if enabled
         let brandContext = null;
         if (useBrandSettings) {
@@ -97,6 +101,7 @@ exports.generateArticle = async (req, res) => {
                 selectedModel: textModel,
                 topic,
                 purpose,
+                purposeForPrompt,
                 wordCount,
                 writingStyle,
                 storytellingDepth,
@@ -109,7 +114,7 @@ exports.generateArticle = async (req, res) => {
             // Manual mode with uploaded image
             result = await geminiService.generateArticleWithImage({
                 topic,
-                purpose,
+                purpose: purposeForPrompt,
                 description,
                 wordCount,
                 imagePath: normalizedImageUrls[0],
@@ -128,7 +133,7 @@ exports.generateArticle = async (req, res) => {
             // AI Image mode with pre-generated image
             result = await geminiService.generateArticleWithImage({
                 topic,
-                purpose,
+                purpose: purposeForPrompt,
                 description,
                 wordCount,
                 imagePath: normalizedImageUrls[0],
@@ -147,7 +152,7 @@ exports.generateArticle = async (req, res) => {
             // AI Image mode - fallback to old behavior
             result = await geminiService.generateArticleWithAIImage({
                 topic,
-                purpose,
+                purpose: purposeForPrompt,
                 description,
                 wordCount,
                 brandContext,
@@ -162,7 +167,7 @@ exports.generateArticle = async (req, res) => {
             // Default text-only generation
             result = await geminiService.generateArticleContent({
                 topic,
-                purpose,
+                purpose: purposeForPrompt,
                 description,
                 wordCount,
                 brandContext,
@@ -266,6 +271,12 @@ exports.generateAndSaveArticle = async (req, res) => {
             });
         }
 
+        const purposeEnumValues = Article.schema.path('purpose')?.enumValues || [];
+        const {
+            promptValue: purposeForPrompt,
+            storageValue: purposeForStorage
+        } = resolveArticlePurpose(purpose, purposeEnumValues);
+
         // Fetch brand context if enabled
         let brandContext = null;
         if (useBrandSettings) {
@@ -304,7 +315,7 @@ exports.generateAndSaveArticle = async (req, res) => {
             title: `Đang tạo bài viết: ${topic}`.slice(0, 500),
             content: 'Đang tạo nội dung bằng AI...',
             topic,
-            purpose,
+            purpose: purposeForStorage,
             imageUrl: normalizedImageUrls[0] || null,
             imageUrls: normalizedImageUrls,
             hashtags: [],
@@ -319,6 +330,8 @@ exports.generateAndSaveArticle = async (req, res) => {
                 selectedModel: textModel,
                 topic,
                 purpose,
+                purposeForPrompt,
+                purposeForStorage,
                 wordCount,
                 writingStyle,
                 storytellingDepth,
@@ -331,7 +344,7 @@ exports.generateAndSaveArticle = async (req, res) => {
         if (mode === 'manual' && normalizedImageUrls.length > 0) {
             result = await geminiService.generateArticleWithImage({
                 topic,
-                purpose,
+                purpose: purposeForPrompt,
                 description,
                 wordCount,
                 imagePath: normalizedImageUrls[0],
@@ -348,7 +361,7 @@ exports.generateAndSaveArticle = async (req, res) => {
         } else if (mode === 'ai_image' && normalizedImageUrls.length > 0) {
             result = await geminiService.generateArticleWithImage({
                 topic,
-                purpose,
+                purpose: purposeForPrompt,
                 description,
                 wordCount,
                 imagePath: normalizedImageUrls[0],
@@ -365,7 +378,7 @@ exports.generateAndSaveArticle = async (req, res) => {
         } else if (mode === 'ai_image') {
             result = await geminiService.generateArticleWithAIImage({
                 topic,
-                purpose,
+                purpose: purposeForPrompt,
                 description,
                 wordCount,
                 brandContext,
@@ -379,7 +392,7 @@ exports.generateAndSaveArticle = async (req, res) => {
         } else {
             result = await geminiService.generateArticleContent({
                 topic,
-                purpose,
+                purpose: purposeForPrompt,
                 description,
                 wordCount,
                 brandContext,
@@ -397,7 +410,7 @@ exports.generateAndSaveArticle = async (req, res) => {
             title: result.title,
             content: result.content,
             topic,
-            purpose,
+            purpose: purposeForStorage,
             imageUrl: result.imageUrl || null,
             imageUrls: result.imageUrls || (result.imageUrl ? [result.imageUrl] : []),
             hashtags: result.hashtags || [],

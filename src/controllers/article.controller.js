@@ -1,4 +1,5 @@
 const Article = require('../models/Article');
+const { resolveArticlePurpose } = require('../utils/articlePurpose');
 const { deleteFileFromPath } = require('../utils/fileCleanup');
 
 function escapeRegex(input = '') {
@@ -12,6 +13,8 @@ function escapeRegex(input = '') {
 exports.createArticle = async (req, res) => {
     try {
         const { title, content, topic, purpose, imageUrl, imageUrls, hashtags, status } = req.body;
+        const purposeEnumValues = Article.schema.path('purpose')?.enumValues || [];
+        const { storageValue: purposeForStorage } = resolveArticlePurpose(purpose, purposeEnumValues);
 
         const normalizedImageUrls = Array.isArray(imageUrls) && imageUrls.length > 0
             ? imageUrls.filter(Boolean)
@@ -24,7 +27,7 @@ exports.createArticle = async (req, res) => {
             title,
             content,
             topic,
-            purpose,
+            purpose: purposeForStorage,
             imageUrl: imageUrl || normalizedImageUrls[0],
             imageUrls: normalizedImageUrls,
             hashtags: hashtags || [],
@@ -145,6 +148,7 @@ exports.getArticle = async (req, res) => {
 exports.updateArticle = async (req, res) => {
     try {
         const { title, content, topic, purpose, imageUrl, imageUrls, hashtags, status } = req.body;
+        const purposeEnumValues = Article.schema.path('purpose')?.enumValues || [];
 
         const updateData = {};
 
@@ -158,7 +162,7 @@ exports.updateArticle = async (req, res) => {
             updateData.topic = topic;
         }
         if (Object.prototype.hasOwnProperty.call(req.body, 'purpose')) {
-            updateData.purpose = purpose;
+            updateData.purpose = resolveArticlePurpose(purpose, purposeEnumValues).storageValue;
         }
         if (Object.prototype.hasOwnProperty.call(req.body, 'hashtags')) {
             updateData.hashtags = hashtags;
