@@ -14,6 +14,7 @@ const { buildCreativeInputBlock, normalizeCreativeInputs } = require('./prompt-m
 const { buildFnbPhotorealGuardrails } = require('./prompt-modules/image/fnbPhotoreal.module');
 const { logPromptDebug } = require('../../utils/promptDebug');
 const {
+    buildDisplayTextRules,
     isDetailedApiLogEnabled,
     logError,
     logOutboundRequest,
@@ -310,7 +311,7 @@ function sanitizeBrandContextForImagePrompt(brandContext, { visualStyle, additio
     };
 }
 
-function buildDeterministicHardNegativeRules(intentSignals = {}) {
+function buildDeterministicHardNegativeRules(intentSignals = {}, displayInfo = '') {
     const {
         wantsOutdoor,
         wantsHumanPresence,
@@ -319,10 +320,14 @@ function buildDeterministicHardNegativeRules(intentSignals = {}) {
         isPhotorealPriority
     } = intentSignals;
 
+    const hasDisplayText = typeof displayInfo === 'string' && displayInfo.trim().length > 0;
+
     const rules = [
         'Do not alter product identity: shape, material, colors, packaging details, logos, and label marks must stay consistent.',
         'Do not replace the product with another variant, ingredient set, or unrelated object.',
-        'Do not generate text overlays, watermarks, or AI-invented brand marks.'
+        hasDisplayText
+            ? 'Do not generate any readable text except the exact required DISPLAY TEXT POLICY string.'
+            : 'Do not generate text overlays, watermarks, or AI-invented brand marks.'
     ];
 
     if (isPhotorealPriority) {
@@ -484,7 +489,7 @@ async function buildConsistentSceneBlueprint(params) {
             : null
     ].filter(Boolean);
 
-    const deterministicHardNegativeRules = buildDeterministicHardNegativeRules(intentSignals);
+    const deterministicHardNegativeRules = buildDeterministicHardNegativeRules(intentSignals, displayInfo);
     const hardNegativeRules = sanitizeHardNegativeRules(deterministicHardNegativeRules, intentSignals);
 
     return {
@@ -504,6 +509,8 @@ function buildConsistentAnglePrompt(params) {
         additionalNotes,
         intentSignals,
         userSceneIntentBlock,
+        displayTextPolicyBlock,
+        hasDisplayText = false,
         sanitizedBrandContext,
         creativeBlock,
         photorealGuardrails,
@@ -532,6 +539,10 @@ function buildConsistentAnglePrompt(params) {
 
     const negativeRules = (sceneBlueprint.hardNegativeRules || []).map((rule, index) => `${index + 1}. ${rule}`).join('\n');
     const intentSummary = `outdoor=${intentSignals?.wantsOutdoor ? 'yes' : 'no'}, human=${intentSignals?.wantsHumanPresence ? 'yes' : 'no'}, action=${intentSignals?.wantsAction ? (intentSignals?.actionType || 'yes') : 'no'}`;
+
+    const textRequirementLine = hasDisplayText
+        ? '- Text rendering: ONLY the exact DISPLAY TEXT POLICY text is allowed. No extra words.'
+        : '- No text, no watermark, no AI-invented branding';
 
     return composePromptBlocks([
         `## MULTI-ANGLE PRODUCT IMAGE GENERATION (CONSISTENCY MODE)
@@ -576,6 +587,8 @@ ${identityAnchor}
 ${userSceneIntentBlock || '- Follow user scene request while preserving product identity lock.'}
 - Resolved intent signals: ${intentSummary}
 
+${displayTextPolicyBlock || ''}
+
 ### HARD NEGATIVE RULES
 ${negativeRules}
 
@@ -583,7 +596,7 @@ ${negativeRules}
 - Aspect ratio: ${sizeInfo.label} (${sizeInfo.width}x${sizeInfo.height})
 - Style: Photorealistic professional commercial photography
 - Keep natural and coherent shadows with unchanged scene context
-- No text, no watermark, no AI-invented branding
+- ${textRequirementLine}
 
 ### OPTIONAL USER NOTES
 ${additionalNotes || '(none)'}
@@ -697,7 +710,11 @@ Only return valid JSON.`;
         
         return { summary: text };
     } catch (error) {
-        console.error('analyzeProductImage error:', error);
+        logError('analyzeProductImage error', {
+            service: 'product-image',
+            imagePath,
+            error
+        });
         throw error;
     }
 }
@@ -1111,6 +1128,7 @@ async function generateProductWithBackground(params) {
         });
 
         const identityAnchor = buildIdentityAnchor(productAnalysis);
+        const displayTextPolicy = buildDisplayTextRules(displayInfo);
         const sceneBlueprint = await buildConsistentSceneBlueprint({
             productAnalysis,
             backgroundType,
@@ -1158,6 +1176,7 @@ async function generateProductWithBackground(params) {
                 normalizedAngles,
                 identityAnchor,
                 sceneBlueprint,
+                displayTextPolicy,
                 intentSignals,
                 userSceneIntentBlock,
                 brandContextLengthRaw: brandContextSanitization.originalLength,
@@ -1202,6 +1221,8 @@ async function generateProductWithBackground(params) {
                         outputSize,
                         additionalNotes: angleSpecificNotes,
                         userSceneIntentBlock,
+                        displayTextPolicyBlock: displayTextPolicy.block,
+                        hasDisplayText: !!displayTextPolicy.normalized,
                         sanitizedBrandContext,
                         creativeBlock,
                         photorealGuardrails,
@@ -1272,7 +1293,10 @@ async function generateProductWithBackground(params) {
                 stack: error?.stack
             }
         });
-        console.error('generateProductWithBackground error:', error);
+        logError('generateProductWithBackground error', {
+            service: 'product-image',
+            error
+        });
         throw error;
     }
 }

@@ -1,6 +1,5 @@
 const {
     createRequestId,
-    isDetailedApiLogEnabled,
     logApiInboundStart,
     logApiInboundEnd,
     runWithRequestContext
@@ -30,20 +29,20 @@ function requestLogger(req, res, next) {
         inboundMethod: method,
         inboundPath: requestPath
     }, () => {
-        if (isDetailedApiLogEnabled()) {
-            logApiInboundStart({
-                method,
-                path: requestPath,
-                requestId,
-                ip: clientIp
-            });
-        }
+        logApiInboundStart({
+            method,
+            path: requestPath,
+            requestId,
+            ip: clientIp
+        });
+
+        let hasLoggedFinal = false;
 
         res.on('finish', () => {
-            const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
-            const shouldLog = isDetailedApiLogEnabled() || res.statusCode >= 400;
+            if (hasLoggedFinal) return;
+            hasLoggedFinal = true;
 
-            if (!shouldLog) return;
+            const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
 
             logApiInboundEnd({
                 method,
@@ -53,6 +52,24 @@ function requestLogger(req, res, next) {
                 requestId,
                 ip: clientIp,
                 contentLength: res.getHeader('content-length') || undefined
+            });
+        });
+
+        res.on('close', () => {
+            if (hasLoggedFinal) return;
+            hasLoggedFinal = true;
+
+            const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+            const statusCode = res.statusCode && res.statusCode > 0 ? res.statusCode : 499;
+
+            logApiInboundEnd({
+                method,
+                path: requestPath,
+                status: statusCode,
+                durationMs,
+                requestId,
+                ip: clientIp,
+                closedEarly: true
             });
         });
 

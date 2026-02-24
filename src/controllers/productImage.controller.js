@@ -9,6 +9,78 @@ const geminiService = require('../services/gemini');
 const { getModelForTask } = require('../services/gemini/modelConfig.service');
 const { deleteFilesFromPaths } = require('../utils/fileCleanup');
 const { logPromptDebug } = require('../utils/promptDebug');
+const { normalizeDisplayInfo, logError } = require('../utils');
+
+const PROCESSING_STALE_MS = Number(process.env.PRODUCT_IMAGE_STALE_MS || 10 * 60 * 1000);
+const HEARTBEAT_INTERVAL_MS = Number(process.env.PRODUCT_IMAGE_HEARTBEAT_MS || 5000);
+
+function isProcessingStale(image, now = new Date()) {
+    if (!image || image.status !== 'processing') return false;
+
+    const heartbeat = image.processingHeartbeatAt || image.updatedAt || image.processingStartedAt;
+    if (!heartbeat) return false;
+
+    return now.getTime() - new Date(heartbeat).getTime() > PROCESSING_STALE_MS;
+}
+
+function startHeartbeatTimer(imageId) {
+    if (!imageId) return null;
+
+    const timer = setInterval(() => {
+        ProductImage.updateOne(
+            { _id: imageId, status: 'processing' },
+            { $set: { processingHeartbeatAt: new Date() } }
+        ).catch(() => {});
+    }, HEARTBEAT_INTERVAL_MS);
+
+    if (typeof timer.unref === 'function') {
+        timer.unref();
+    }
+
+    return timer;
+}
+
+async function refreshAndResolveStaleProcessing(items) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return items;
+    }
+
+    const now = new Date();
+    let changed = false;
+
+    for (const item of items) {
+        if (!isProcessingStale(item, now)) continue;
+
+        item.status = 'failed';
+        if (!item.errorMessage) {
+            item.errorMessage = 'Tiến trình tạo ảnh đã quá thời gian xử lý, vui lòng thử lại hoặc xóa.';
+        }
+        item.processingCompletedAt = now;
+        item.processingHeartbeatAt = now;
+        await item.save();
+        changed = true;
+    }
+
+    if (!changed) return items;
+
+    const ids = items.map((item) => item._id);
+    return ProductImage.find({ _id: { $in: ids } })
+        .sort({ createdAt: -1 });
+}
+
+function decorateProcessingState(image, now = new Date()) {
+    if (!image) return image;
+
+    const plain = typeof image.toObject === 'function' ? image.toObject() : { ...image };
+    const stale = isProcessingStale(image, now);
+    const lastHeartbeat = image.processingHeartbeatAt || image.updatedAt || image.processingStartedAt || null;
+
+    plain.isProcessingStale = stale;
+    plain.isLikelyRunning = plain.status === 'processing' && !stale;
+    plain.processingLastHeartbeatAt = lastHeartbeat;
+
+    return plain;
+}
 
 function normalizeCameraAngles(cameraAngles) {
     const supportedAngles = ['wide', 'medium', 'closeup', 'topdown', 'detail'];
@@ -112,6 +184,8 @@ exports.generateProductImage = async (req, res) => {
         }
 
         const normalizedAngles = normalizeCameraAngles(cameraAngles);
+        const normalizedDisplayInfo = normalizeDisplayInfo(displayInfo);
+        const processingStartedAt = new Date();
 
         // Get user's selected model for image generation
         const imageGenModel = await getModelForTask('imageGen', req.user._id);
@@ -131,7 +205,7 @@ exports.generateProductImage = async (req, res) => {
             })),
             customBackground: normalizedCustomBackground,
             usagePurpose: usagePurpose || '',
-            displayInfo: displayInfo || '',
+            displayInfo: normalizedDisplayInfo,
             adIntensity: adIntensity || '',
             typographyGuidance: typographyGuidance || '',
             targetAudience: targetAudience || '',
@@ -143,7 +217,10 @@ exports.generateProductImage = async (req, res) => {
             outputSize: outputSize || '1:1',
             additionalNotes: additionalNotes || '',
             usedBrandSettings: !!useBrandSettings,
-            status: 'processing'
+            status: 'processing',
+            processingStartedAt,
+            processingHeartbeatAt: processingStartedAt,
+            processingCompletedAt: null
         });
 
         // Fetch brand context and logo if enabled
@@ -176,7 +253,9 @@ exports.generateProductImage = async (req, res) => {
         // Get full path to original image
         const originalImagePath = geminiService.productImageService.getFilePathFromUrl(normalizedOriginalImageUrl);
 
+        let heartbeatTimer = null;
         try {
+            heartbeatTimer = startHeartbeatTimer(productImage._id);
             // Generate the image
             const generatedImages = await geminiService.productImageService.generateProductWithBackground({
                 originalImagePath,
@@ -184,7 +263,7 @@ exports.generateProductImage = async (req, res) => {
                 cameraAngles: normalizedAngles,
                 customBackground: normalizedCustomBackground,
                 usagePurpose,
-                displayInfo,
+                displayInfo: normalizedDisplayInfo,
                 adIntensity,
                 typographyGuidance,
                 targetAudience,
@@ -216,12 +295,14 @@ exports.generateProductImage = async (req, res) => {
             productImage.status = mapStatusFromGeneratedImages(generatedImages);
             const firstError = generatedImages.find(item => item.status === 'failed' && item.errorMessage)?.errorMessage;
             productImage.errorMessage = firstError || '';
+            productImage.processingHeartbeatAt = new Date();
+            productImage.processingCompletedAt = new Date();
             await productImage.save();
 
             res.status(201).json({
                 success: true,
                 message: 'Tạo ảnh AI thành công',
-                data: productImage
+                data: decorateProcessingState(productImage)
             });
         } catch (genError) {
             logPromptDebug({
@@ -236,9 +317,15 @@ exports.generateProductImage = async (req, res) => {
             // Update record with error
             productImage.status = 'failed';
             productImage.errorMessage = genError.message;
+            productImage.processingHeartbeatAt = new Date();
+            productImage.processingCompletedAt = new Date();
             await productImage.save();
 
             throw genError;
+        } finally {
+            if (heartbeatTimer) {
+                clearInterval(heartbeatTimer);
+            }
         }
     } catch (error) {
         logPromptDebug({
@@ -250,7 +337,10 @@ exports.generateProductImage = async (req, res) => {
                 phase: 'generateProductImage-controller'
             }
         });
-        console.error('Generate product image error:', error);
+        logError('Generate product image error', {
+            endpoint: 'POST /api/product-images/generate',
+            error
+        });
         res.status(500).json({
             success: false,
             message: error.message || 'Lỗi khi tạo ảnh AI'
@@ -339,6 +429,11 @@ exports.regenerateProductImage = async (req, res) => {
 
         const originalImagePath = geminiService.productImageService.getFilePathFromUrl(normalizedOriginalImageUrl);
 
+        const normalizedDisplayInfo = normalizeDisplayInfo(originalImage.displayInfo);
+        if (originalImage.displayInfo !== normalizedDisplayInfo) {
+            originalImage.displayInfo = normalizedDisplayInfo;
+        }
+
         const imageGenModel = originalImage.modelUsed || await getModelForTask('imageGen', req.user._id);
         if (!originalImage.modelUsed && imageGenModel) {
             originalImage.modelUsed = imageGenModel;
@@ -360,6 +455,9 @@ exports.regenerateProductImage = async (req, res) => {
         // Update status to processing
         originalImage.status = 'processing';
         originalImage.errorMessage = '';
+        originalImage.processingStartedAt = new Date();
+        originalImage.processingHeartbeatAt = new Date();
+        originalImage.processingCompletedAt = null;
         const normalizedAngles = normalizeCameraAngles(originalImage.cameraAngles);
         originalImage.cameraAngles = normalizedAngles;
         originalImage.generatedImages = normalizedAngles.map((angle) => ({
@@ -370,7 +468,9 @@ exports.regenerateProductImage = async (req, res) => {
         }));
         await originalImage.save();
 
+        let heartbeatTimer = null;
         try {
+            heartbeatTimer = startHeartbeatTimer(originalImage._id);
             // Regenerate the image
             const generatedImages = await geminiService.productImageService.generateProductWithBackground({
                 originalImagePath,
@@ -378,7 +478,7 @@ exports.regenerateProductImage = async (req, res) => {
                 cameraAngles: normalizedAngles,
                 customBackground: normalizedCustomBackground,
                 usagePurpose: originalImage.usagePurpose,
-                displayInfo: originalImage.displayInfo,
+                displayInfo: normalizedDisplayInfo,
                 adIntensity: originalImage.adIntensity,
                 typographyGuidance: originalImage.typographyGuidance,
                 targetAudience: originalImage.targetAudience,
@@ -411,12 +511,14 @@ exports.regenerateProductImage = async (req, res) => {
             originalImage.status = mapStatusFromGeneratedImages(generatedImages);
             const firstError = generatedImages.find(item => item.status === 'failed' && item.errorMessage)?.errorMessage;
             originalImage.errorMessage = firstError || '';
+            originalImage.processingHeartbeatAt = new Date();
+            originalImage.processingCompletedAt = new Date();
             await originalImage.save();
 
             res.status(200).json({
                 success: true,
                 message: 'Tạo lại ảnh AI thành công',
-                data: originalImage
+                data: decorateProcessingState(originalImage)
             });
         } catch (genError) {
             logPromptDebug({
@@ -430,9 +532,15 @@ exports.regenerateProductImage = async (req, res) => {
             });
             originalImage.status = 'failed';
             originalImage.errorMessage = genError.message;
+            originalImage.processingHeartbeatAt = new Date();
+            originalImage.processingCompletedAt = new Date();
             await originalImage.save();
 
             throw genError;
+        } finally {
+            if (heartbeatTimer) {
+                clearInterval(heartbeatTimer);
+            }
         }
     } catch (error) {
         logPromptDebug({
@@ -444,7 +552,10 @@ exports.regenerateProductImage = async (req, res) => {
                 stack: error?.stack
             }
         });
-        console.error('Regenerate product image error:', error);
+        logError('Regenerate product image error', {
+            endpoint: 'POST /api/product-images/:id/regenerate',
+            error
+        });
         res.status(500).json({
             success: false,
             message: error.message || 'Lỗi khi tạo lại ảnh AI'
@@ -476,18 +587,21 @@ exports.getAllProductImages = async (req, res) => {
             query.status = status;
         }
 
-        const [images, total] = await Promise.all([
+        const [imagesRaw, total] = await Promise.all([
             ProductImage.find(query)
                 .sort({ createdAt: -1 })
                 .skip(skip)
-                .limit(parseInt(limit))
-                .select('-errorMessage'),
+                .limit(parseInt(limit)),
             ProductImage.countDocuments(query)
         ]);
 
+        const images = await refreshAndResolveStaleProcessing(imagesRaw);
+        const now = new Date();
+        const responseItems = images.map((item) => decorateProcessingState(item, now));
+
         res.status(200).json({
             success: true,
-            data: images,
+            data: responseItems,
             pagination: {
                 page: parseInt(page),
                 limit: parseInt(limit),
@@ -496,7 +610,10 @@ exports.getAllProductImages = async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('Get product images error:', error);
+        logError('Get product images error', {
+            endpoint: 'GET /api/product-images',
+            error
+        });
         res.status(500).json({
             success: false,
             message: 'Lỗi khi lấy danh sách ảnh'
@@ -525,12 +642,30 @@ exports.getProductImageById = async (req, res) => {
             });
         }
 
+        if (image && isProcessingStale(image)) {
+            image.status = 'failed';
+            if (!image.errorMessage) {
+                image.errorMessage = 'Tiến trình tạo ảnh đã quá thời gian xử lý, vui lòng thử lại hoặc xóa.';
+            }
+            image.processingHeartbeatAt = new Date();
+            image.processingCompletedAt = new Date();
+            await image.save();
+        }
+
+        const safeImage = await ProductImage.findOne({
+            _id: id,
+            userId: req.user._id
+        });
+
         res.status(200).json({
             success: true,
-            data: image
+            data: decorateProcessingState(safeImage)
         });
     } catch (error) {
-        console.error('Get product image error:', error);
+        logError('Get product image error', {
+            endpoint: 'GET /api/product-images/:id',
+            error
+        });
         res.status(500).json({
             success: false,
             message: 'Lỗi khi lấy thông tin ảnh'
@@ -578,7 +713,10 @@ exports.deleteProductImage = async (req, res) => {
             filesNotFound: fileResult.filesNotFound
         });
     } catch (error) {
-        console.error('Delete product image error:', error);
+        logError('Delete product image error', {
+            endpoint: 'DELETE /api/product-images/:id',
+            error
+        });
         res.status(500).json({
             success: false,
             message: 'Lỗi khi xóa ảnh'

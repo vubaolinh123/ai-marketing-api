@@ -167,6 +167,20 @@ const ProductImageSchema = new mongoose.Schema({
     errorMessage: {
         type: String,
         default: ''
+    },
+
+    // Runtime monitoring for long-running/stuck jobs
+    processingStartedAt: {
+        type: Date,
+        default: null
+    },
+    processingHeartbeatAt: {
+        type: Date,
+        default: null
+    },
+    processingCompletedAt: {
+        type: Date,
+        default: null
     }
 }, {
     timestamps: true

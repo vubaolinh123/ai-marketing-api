@@ -198,6 +198,38 @@ function logApiInboundEnd({ method, path, status, durationMs, ...meta } = {}) {
     emit('API_IN_END', `${buildTargetLine(method, path)} ${statusText} ${durationText}`, meta);
 }
 
+function normalizeDisplayInfo(value) {
+    if (typeof value !== 'string') return '';
+    return value.replace(/\s+/g, ' ').trim();
+}
+
+function buildDisplayTextRules(displayInfo) {
+    const normalized = normalizeDisplayInfo(displayInfo);
+
+    if (!normalized) {
+        return {
+            normalized,
+            block: [
+                '### DISPLAY TEXT POLICY (HIGHEST PRIORITY)',
+                '- Do NOT render any readable text, typography, headline, caption, slogan, or brand wording on image.',
+                '- Keep surfaces/signage/labels without text artifacts.',
+                '- This policy overrides all other creative or brand-context hints about typography.'
+            ].join('\n')
+        };
+    }
+
+    return {
+        normalized,
+        block: [
+            '### DISPLAY TEXT POLICY (HIGHEST PRIORITY)',
+            `- REQUIRED exact display text: "${normalized}"`,
+            '- Render ONLY this exact text string. Do NOT change wording, do NOT translate, do NOT abbreviate, do NOT add/remove words.',
+            '- Do NOT render any other readable text (including brand names, slogans, watermarks, labels, decorative typography).',
+            '- This policy overrides brand context and any other typography hints.'
+        ].join('\n')
+    };
+}
+
 function logOutboundRequest({ method = 'POST', url, ...meta } = {}) {
     emit('OUT_REQ', buildTargetLine(method, url), meta);
 }
@@ -228,5 +260,7 @@ module.exports = {
     logApiInboundStart,
     logApiInboundEnd,
     logOutboundRequest,
-    logOutboundResponse
+    logOutboundResponse,
+    normalizeDisplayInfo,
+    buildDisplayTextRules
 };
