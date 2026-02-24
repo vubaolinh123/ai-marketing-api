@@ -13,6 +13,12 @@ const { composePromptBlocks } = require('./prompt-modules/shared/composer');
 const { buildCreativeInputBlock, normalizeCreativeInputs } = require('./prompt-modules/image/creativeInput.module');
 const { buildFnbPhotorealGuardrails } = require('./prompt-modules/image/fnbPhotoreal.module');
 const { logPromptDebug } = require('../../utils/promptDebug');
+const {
+    isDetailedApiLogEnabled,
+    logError,
+    logOutboundRequest,
+    logOutboundResponse
+} = require('../../utils/logger');
 
 // Upload directory for AI-generated product images
 const PRODUCT_IMAGES_DIR = path.join(process.cwd(), 'uploads', 'images', 'product-images');
@@ -715,7 +721,30 @@ async function downloadLogo(logoUrl) {
         
         // If it's a full URL, download it
         if (logoUrl.startsWith('http')) {
+            const startedAt = process.hrtime.bigint();
+            const debugEnabled = isDetailedApiLogEnabled();
+
+            if (debugEnabled) {
+                logOutboundRequest({
+                    method: 'GET',
+                    url: logoUrl,
+                    operation: 'download-logo'
+                });
+            }
+
             const response = await fetch(logoUrl);
+            const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+
+            if (debugEnabled || !response.ok) {
+                logOutboundResponse({
+                    method: 'GET',
+                    url: logoUrl,
+                    status: response.status,
+                    durationMs,
+                    operation: 'download-logo'
+                });
+            }
+
             if (!response.ok) return null;
             
             const buffer = Buffer.from(await response.arrayBuffer());
@@ -728,7 +757,18 @@ async function downloadLogo(logoUrl) {
         
         return null;
     } catch (error) {
-        console.error('downloadLogo error:', error);
+        logOutboundResponse({
+            method: 'GET',
+            url: logoUrl,
+            status: error?.status || error?.statusCode || 500,
+            error: error?.message || 'downloadLogo failed',
+            operation: 'download-logo'
+        });
+        logError('downloadLogo error', {
+            service: 'product-image',
+            logoUrl,
+            error
+        });
         return null;
     }
 }
@@ -838,7 +878,14 @@ async function overlayLogo(imagePath, logoPath, position, outputSize) {
         
         return `/uploads/images/product-images/${outputFilename}`;
     } catch (error) {
-        console.error('overlayLogo error:', error);
+        logError('overlayLogo error', {
+            service: 'product-image',
+            imagePath,
+            logoPath,
+            position,
+            outputSize,
+            error
+        });
         // Return original if overlay fails
         return imagePath.replace(process.cwd(), '').replace(/\\/g, '/');
     }
@@ -872,8 +919,7 @@ async function generateSingleAngleImage(params) {
         modelName
     } = params;
 
-    const imageModel = genAI.getGenerativeModel({
-        model: modelName || MODELS.IMAGE_GEN,
+    const imageModel = getModel('IMAGE_GEN', modelName || MODELS.IMAGE_GEN, {
         generationConfig: {
             responseModalities: ['TEXT', 'IMAGE']
         }

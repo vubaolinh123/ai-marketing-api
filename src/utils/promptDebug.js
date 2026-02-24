@@ -1,5 +1,6 @@
 const MAX_STRING_LENGTH = 1200;
 const SENSITIVE_KEY_PATTERN = /(token|password|api[_-]?key|secret|authorization)/i;
+const { getVietnamTimestamp } = require('./logger');
 
 function isPromptDebugEnabled() {
     return String(process.env.DEBUG_PROMT).toLowerCase() === 'true';
@@ -53,7 +54,7 @@ function logPromptDebug({ tool = 'unknown', step = 'unknown', data = {} } = {}) 
 
     const payload = {
         type: 'prompt-debug',
-        ts: new Date().toISOString(),
+        ts: getVietnamTimestamp(),
         tool,
         step,
         data: sanitizeValue(data)

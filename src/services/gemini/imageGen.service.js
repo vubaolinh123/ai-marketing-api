@@ -6,9 +6,10 @@
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
-const { genAI, getModel, PURPOSE_LABELS, parseJsonResponse } = require('./gemini.config');
+const { getModel, PURPOSE_LABELS, parseJsonResponse } = require('./gemini.config');
 const { injectBrandContextToPrompt } = require('./brandContext.service');
 const { logPromptDebug } = require('../../utils/promptDebug');
+const { logError } = require('../../utils/logger');
 
 const WRITING_STYLE_DIRECTIVES = {
     sales: 'Nhịp nhanh, rõ ý, CTA mạnh.',
@@ -41,8 +42,7 @@ async function generateImage(prompt, options = {}) {
     try {
         // Use Gemini 2.0 Flash experimental for native image generation
         const { MODELS } = require('./gemini.config');
-        const imageModel = genAI.getGenerativeModel({ 
-            model: MODELS.IMAGE_GEN,
+        const imageModel = getModel('IMAGE_GEN', null, {
             generationConfig: {
                 responseModalities: ['TEXT', 'IMAGE']
             }
@@ -112,7 +112,10 @@ async function generateImage(prompt, options = {}) {
                 stack: error?.stack
             }
         });
-        console.error('imageGen.service error:', error.message);
+        logError('imageGen.service error', {
+            service: 'image-gen',
+            error
+        });
         
         // Fallback to Unsplash if generation fails
         const keywords = encodeURIComponent(prompt.slice(0, 50));
@@ -269,7 +272,10 @@ Chỉ trả về JSON, không có text thêm.`;
                 stack: error?.stack
             }
         });
-        console.error('generateArticleWithAIImage error:', error);
+        logError('generateArticleWithAIImage error', {
+            service: 'article-with-ai-image',
+            error
+        });
         throw error;
     }
 }

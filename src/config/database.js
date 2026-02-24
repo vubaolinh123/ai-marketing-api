@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { logStartup, logError } = require('../utils');
 
 const connectDB = async () => {
     try {
@@ -6,9 +7,11 @@ const connectDB = async () => {
             // Mongoose 8 không cần các options này nữa
         });
 
-        console.log(`MongoDB Connected: ${conn.connection.host}`);
+        logStartup('MongoDB connected', {
+            host: conn.connection.host
+        });
     } catch (error) {
-        console.error(`Error: ${error.message}`);
+        logError('MongoDB connection failed', { error });
         process.exit(1);
     }
 };

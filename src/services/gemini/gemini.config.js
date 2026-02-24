@@ -5,10 +5,17 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { MODEL_RECOMMENDATIONS, DEFAULT_MODELS } = require('./modelConfig.service');
+const {
+    isDetailedApiLogEnabled,
+    logWarn,
+    logError,
+    logOutboundRequest,
+    logOutboundResponse
+} = require('../../utils/logger');
 
 // Validate API key
 if (!process.env.API_KEY_GEMINI) {
-    console.warn('Warning: API_KEY_GEMINI not found in environment variables');
+    logWarn('API_KEY_GEMINI not found in environment variables');
 }
 
 // Initialize Gemini client
@@ -40,15 +47,131 @@ const PURPOSE_LABELS = {
  * @param {string} customModelName - Optional custom model name override from user settings
  * @returns {Object} Model instance
  */
-function getModel(type, customModelName = null) {
+function buildGeminiInputMeta(payload) {
+    if (typeof payload === 'string') {
+        return {
+            inputType: 'text',
+            promptChars: payload.length
+        };
+    }
+
+    if (Array.isArray(payload)) {
+        const textChars = payload
+            .filter((item) => typeof item === 'string')
+            .reduce((total, item) => total + item.length, 0);
+
+        const hasInlineData = payload.some((item) => !!item?.inlineData);
+
+        return {
+            inputType: 'multipart',
+            partCount: payload.length,
+            textChars,
+            hasInlineData
+        };
+    }
+
+    if (payload && typeof payload === 'object') {
+        return {
+            inputType: 'object',
+            keys: Object.keys(payload).join(',')
+        };
+    }
+
+    return {
+        inputType: typeof payload
+    };
+}
+
+function getErrorCode(error) {
+    if (!error) return 500;
+    return Number(error.status || error.statusCode || 500);
+}
+
+function createLoggedModel(model, { modelName, type }) {
+    if (!model || typeof model.generateContent !== 'function') {
+        return model;
+    }
+
+    return new Proxy(model, {
+        get(target, prop, receiver) {
+            const raw = Reflect.get(target, prop, receiver);
+
+            if (prop !== 'generateContent' || typeof raw !== 'function') {
+                return typeof raw === 'function' ? raw.bind(target) : raw;
+            }
+
+            return async function loggedGenerateContent(...args) {
+                const inputPayload = args[0];
+                const operationUrl = `gemini://${modelName}/generateContent`;
+                const startedAt = process.hrtime.bigint();
+                const requestMeta = {
+                    provider: 'google-gemini',
+                    model: modelName,
+                    modelType: normalizeModelType(type),
+                    operation: 'generateContent',
+                    ...buildGeminiInputMeta(inputPayload)
+                };
+                const debugEnabled = isDetailedApiLogEnabled();
+
+                if (debugEnabled) {
+                    logOutboundRequest({
+                        method: 'POST',
+                        url: operationUrl,
+                        ...requestMeta
+                    });
+                }
+
+                try {
+                    const response = await raw.apply(target, args);
+                    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+
+                    if (debugEnabled) {
+                        logOutboundResponse({
+                            method: 'POST',
+                            url: operationUrl,
+                            status: 200,
+                            durationMs,
+                            ...requestMeta
+                        });
+                    }
+
+                    return response;
+                } catch (error) {
+                    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+                    const status = getErrorCode(error);
+
+                    logOutboundResponse({
+                        method: 'POST',
+                        url: operationUrl,
+                        status,
+                        durationMs,
+                        error: error?.message || 'Gemini request failed',
+                        ...requestMeta
+                    });
+
+                    throw error;
+                }
+            };
+        }
+    });
+}
+
+function getModel(type, customModelName = null, modelOptions = {}) {
     const modelName = resolveModelName(type, customModelName);
 
     try {
-        return genAI.getGenerativeModel({ model: modelName });
+        const model = genAI.getGenerativeModel({ model: modelName, ...modelOptions });
+        return createLoggedModel(model, { modelName, type });
     } catch (error) {
         const fallbackModelName = MODELS[normalizeModelType(type)] || MODELS.TEXT;
-        console.error('Gemini model init failed, fallback to default model:', error);
-        return genAI.getGenerativeModel({ model: fallbackModelName });
+        logError('Gemini model init failed, fallback to default model', {
+            modelName,
+            fallbackModelName,
+            error
+        });
+
+        const fallbackModel = genAI.getGenerativeModel({ model: fallbackModelName, ...modelOptions });
+        return createLoggedModel(fallbackModel, { modelName: fallbackModelName, type });
     }
 }
 
@@ -114,7 +237,7 @@ function parseJsonResponse(text) {
         try {
             return JSON.parse(jsonMatch[0]);
         } catch (error) {
-            console.error('JSON parse error:', error);
+            logError('JSON parse error', { error });
             return null;
         }
     }

@@ -8,6 +8,12 @@ const path = require('path');
 const https = require('https');
 const http = require('http');
 const { getModel } = require('./gemini.config');
+const {
+    isDetailedApiLogEnabled,
+    logError,
+    logOutboundRequest,
+    logOutboundResponse
+} = require('../../utils/logger');
 
 // MIME types mapping
 const MIME_TYPES = {
@@ -26,22 +32,63 @@ const MIME_TYPES = {
 async function downloadImageAsBase64(imageUrl) {
     return new Promise((resolve, reject) => {
         const protocol = imageUrl.startsWith('https') ? https : http;
+        const startedAt = process.hrtime.bigint();
+        const debugEnabled = isDetailedApiLogEnabled();
+
+        if (debugEnabled) {
+            logOutboundRequest({
+                method: 'GET',
+                url: imageUrl,
+                operation: 'download-image'
+            });
+        }
         
         protocol.get(imageUrl, (response) => {
             // Handle redirects
             if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+                const redirectDurationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+                if (debugEnabled) {
+                    logOutboundResponse({
+                        method: 'GET',
+                        url: imageUrl,
+                        status: response.statusCode,
+                        durationMs: redirectDurationMs,
+                        operation: 'download-image',
+                        redirectTo: response.headers.location
+                    });
+                }
                 return downloadImageAsBase64(response.headers.location)
                     .then(resolve)
                     .catch(reject);
             }
             
             if (response.statusCode !== 200) {
+                const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+                logOutboundResponse({
+                    method: 'GET',
+                    url: imageUrl,
+                    status: response.statusCode,
+                    durationMs,
+                    error: `Failed to download image: ${response.statusCode}`,
+                    operation: 'download-image'
+                });
                 return reject(new Error(`Failed to download image: ${response.statusCode}`));
             }
             
             const chunks = [];
             response.on('data', (chunk) => chunks.push(chunk));
             response.on('end', () => {
+                const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+                if (debugEnabled) {
+                    logOutboundResponse({
+                        method: 'GET',
+                        url: imageUrl,
+                        status: response.statusCode,
+                        durationMs,
+                        operation: 'download-image'
+                    });
+                }
+
                 const buffer = Buffer.concat(chunks);
                 const contentType = response.headers['content-type'] || 'image/jpeg';
                 resolve({
@@ -49,8 +96,30 @@ async function downloadImageAsBase64(imageUrl) {
                     mimeType: contentType.split(';')[0]
                 });
             });
-            response.on('error', reject);
-        }).on('error', reject);
+            response.on('error', (error) => {
+                const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+                logOutboundResponse({
+                    method: 'GET',
+                    url: imageUrl,
+                    status: 500,
+                    durationMs,
+                    error: error?.message || 'download stream error',
+                    operation: 'download-image'
+                });
+                reject(error);
+            });
+        }).on('error', (error) => {
+            const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+            logOutboundResponse({
+                method: 'GET',
+                url: imageUrl,
+                status: 500,
+                durationMs,
+                error: error?.message || 'download request error',
+                operation: 'download-image'
+            });
+            reject(error);
+        });
     });
 }
 
@@ -156,7 +225,11 @@ Trả lời bằng tiếng Việt, chi tiết và chuyên nghiệp.`;
         const response = result.response;
         return response.text();
     } catch (error) {
-        console.error('analyzeImage error:', error);
+        logError('analyzeImage error', {
+            service: 'image-analysis',
+            imagePath,
+            error
+        });
         throw error;
     }
 }
@@ -199,7 +272,11 @@ Trả lời bằng tiếng Việt, chi tiết và chuyên nghiệp.`;
         const response = result.response;
         return response.text();
     } catch (error) {
-        console.error('analyzeImageUrl error:', error);
+        logError('analyzeImageUrl error', {
+            service: 'image-analysis',
+            imageUrl,
+            error
+        });
         throw error;
     }
 }
