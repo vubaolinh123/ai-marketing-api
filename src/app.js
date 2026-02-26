@@ -19,18 +19,52 @@ const {
 
 const app = express();
 
+const parseBooleanEnv = (value, fallback = false) => {
+    if (value === undefined || value === null || value === '') return fallback;
+    return String(value).toLowerCase() === 'true';
+};
+
+const configuredOrigins = String(process.env.CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+const fallbackOrigins = process.env.NODE_ENV === 'production'
+    ? ['https://marketing-ai-two.vercel.app']
+    : ['http://localhost:3000', 'http://localhost:3001', 'https://marketing-ai-two.vercel.app'];
+
+const allowedOrigins = configuredOrigins.length > 0 ? configuredOrigins : fallbackOrigins;
+const allowNoOrigin = parseBooleanEnv(process.env.CORS_ALLOW_NO_ORIGIN, true);
+
+const corsOptions = {
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Act-As-User'],
+    optionsSuccessStatus: 204,
+    origin(origin, callback) {
+        if (!origin) {
+            if (allowNoOrigin) {
+                return callback(null, true);
+            }
+            return callback(new Error('CORS không cho phép request không có origin'));
+        }
+
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(new Error(`Origin không được phép bởi CORS: ${origin}`));
+    }
+};
+
 // Security middlewares
 app.use(helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" } // Allow serving images cross-origin
 }));
 
 // CORS
-app.use(cors({
-    origin: process.env.NODE_ENV === 'production' 
-        ? ['https://marketing-ai-two.vercel.app'] 
-        : ['http://localhost:3000', 'https://marketing-ai-two.vercel.app'],
-    credentials: true
-}));
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // Body parser
 app.use(express.json({ limit: '10mb' }));
