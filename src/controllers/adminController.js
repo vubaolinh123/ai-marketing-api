@@ -201,6 +201,51 @@ exports.updateUser = async (req, res, next) => {
     }
 };
 
+// @desc    Admin: delete user
+// @route   DELETE /api/admin/users/:id
+// @access  Private (admin)
+exports.deleteUser = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+
+        const user = await User.findById(id);
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy người dùng'
+            });
+        }
+
+        const actor = req.actor || req.user;
+        if (String(user._id) === String(actor._id)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Không thể tự xóa tài khoản của chính mình.'
+            });
+        }
+
+        if (user.role === 'admin') {
+            const adminCount = await User.countDocuments({ role: 'admin' });
+            if (adminCount <= 1) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Không thể xóa admin cuối cùng trong hệ thống.'
+                });
+            }
+        }
+
+        await RefreshToken.deleteMany({ userId: user._id });
+        await User.deleteOne({ _id: user._id });
+
+        res.status(200).json({
+            success: true,
+            message: 'Xóa người dùng thành công'
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 // @desc    Admin: reset user password
 // @route   PATCH /api/admin/users/:id/password
 // @access  Private (admin)
