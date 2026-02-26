@@ -27,8 +27,8 @@ app.use(helmet({
 // CORS
 app.use(cors({
     origin: process.env.NODE_ENV === 'production' 
-        ? ['https://your-frontend-domain.com'] 
-        : ['http://localhost:3000', 'http://localhost:3001'],
+        ? ['https://marketing-ai-two.vercel.app'] 
+        : ['http://localhost:3000', 'https://marketing-ai-two.vercel.app'],
     credentials: true
 }));
 
