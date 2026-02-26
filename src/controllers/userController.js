@@ -1,4 +1,4 @@
-const { User } = require('../models');
+const { User, RefreshToken } = require('../models');
 const bcrypt = require('bcryptjs');
 
 // @desc    Get user profile
@@ -82,6 +82,11 @@ const changePassword = async (req, res, next) => {
 
         user.password = newPassword;
         await user.save();
+
+        await RefreshToken.updateMany(
+            { userId: user._id, revokedAt: null },
+            { $set: { revokedAt: new Date() } }
+        );
 
         res.status(200).json({
             success: true,

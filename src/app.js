@@ -2,8 +2,20 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const path = require('path');
+const cookieParser = require('cookie-parser');
 const { errorHandler, requestLogger } = require('./middlewares');
-const { authRoutes, userRoutes, aiSettingsRoutes, articleRoutes, uploadRoutes, aiRoutes, videoScriptRoutes, productImageRoutes, marketingPlanRoutes } = require('./routes');
+const {
+    authRoutes,
+    userRoutes,
+    aiSettingsRoutes,
+    articleRoutes,
+    uploadRoutes,
+    aiRoutes,
+    videoScriptRoutes,
+    productImageRoutes,
+    marketingPlanRoutes,
+    adminRoutes
+} = require('./routes');
 
 const app = express();
 
@@ -23,6 +35,7 @@ app.use(cors({
 // Body parser
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(cookieParser());
 
 // API request logger (error-focused by default)
 app.use(requestLogger);
@@ -49,6 +62,7 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/video-scripts', videoScriptRoutes);
 app.use('/api/product-images', productImageRoutes);
 app.use('/api/marketing-plan', marketingPlanRoutes);
+app.use('/api/admin', adminRoutes);
 
 // 404 handler
 app.use((req, res, next) => {

@@ -43,6 +43,8 @@ function requestLogger(req, res, next) {
             hasLoggedFinal = true;
 
             const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+            const actor = req.actor || null;
+            const effectiveUser = req.user || null;
 
             logApiInboundEnd({
                 method,
@@ -51,7 +53,10 @@ function requestLogger(req, res, next) {
                 durationMs,
                 requestId,
                 ip: clientIp,
-                contentLength: res.getHeader('content-length') || undefined
+                contentLength: res.getHeader('content-length') || undefined,
+                actorId: actor?._id,
+                effectiveUserId: effectiveUser?._id,
+                isImpersonating: !!req.isImpersonating
             });
         });
 
@@ -61,6 +66,8 @@ function requestLogger(req, res, next) {
 
             const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
             const statusCode = res.statusCode && res.statusCode > 0 ? res.statusCode : 499;
+            const actor = req.actor || null;
+            const effectiveUser = req.user || null;
 
             logApiInboundEnd({
                 method,
@@ -69,7 +76,10 @@ function requestLogger(req, res, next) {
                 durationMs,
                 requestId,
                 ip: clientIp,
-                closedEarly: true
+                closedEarly: true,
+                actorId: actor?._id,
+                effectiveUserId: effectiveUser?._id,
+                isImpersonating: !!req.isImpersonating
             });
         });
 

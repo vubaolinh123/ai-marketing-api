@@ -2,6 +2,8 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
+const ACCESS_TOKEN_EXPIRES_IN = process.env.JWT_EXPIRE || '15m';
+
 const UserSchema = new mongoose.Schema({
     email: {
         type: String,
@@ -62,7 +64,7 @@ UserSchema.methods.getSignedJwtToken = function () {
     return jwt.sign(
         { id: this._id },
         process.env.JWT_SECRET,
-        { expiresIn: process.env.JWT_EXPIRE }
+        { expiresIn: ACCESS_TOKEN_EXPIRES_IN }
     );
 };
 

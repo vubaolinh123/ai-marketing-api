@@ -7,6 +7,7 @@ const aiRoutes = require('./ai.routes');
 const videoScriptRoutes = require('./videoScript.routes');
 const productImageRoutes = require('./productImage.routes');
 const marketingPlanRoutes = require('./marketingPlan.routes');
+const adminRoutes = require('./admin.routes');
 
 module.exports = {
     authRoutes,
@@ -17,5 +18,6 @@ module.exports = {
     aiRoutes,
     videoScriptRoutes,
     productImageRoutes,
-    marketingPlanRoutes
+    marketingPlanRoutes,
+    adminRoutes
 };
