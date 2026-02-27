@@ -12,6 +12,7 @@ const {
     logOutboundRequest,
     logOutboundResponse
 } = require('../../utils/logger');
+const { recordGeminiTokenUsage } = require('../tokenUsage.service');
 
 // Validate API key
 if (!process.env.API_KEY_GEMINI) {
@@ -124,6 +125,17 @@ function createLoggedModel(model, { modelName, type }) {
                 try {
                     const response = await raw.apply(target, args);
                     const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+
+                    recordGeminiTokenUsage({
+                        modelName,
+                        operation: 'generateContent',
+                        responsePayload: response
+                    }).catch((tokenLogError) => {
+                        logWarn('Gemini token usage logging skipped due to error', {
+                            modelName,
+                            message: tokenLogError?.message
+                        });
+                    });
 
                     if (debugEnabled) {
                         logOutboundResponse({

@@ -4,6 +4,7 @@ const MarketingPlan = require('./MarketingPlan');
 const Article = require('./Article');
 const ProductImage = require('./ProductImage');
 const RefreshToken = require('./RefreshToken');
+const TokenUsageDaily = require('./TokenUsageDaily');
 
 module.exports = {
     User,
@@ -11,5 +12,6 @@ module.exports = {
     MarketingPlan,
     Article,
     ProductImage,
-    RefreshToken
+    RefreshToken,
+    TokenUsageDaily
 };

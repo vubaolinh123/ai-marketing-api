@@ -1,0 +1,86 @@
+const mongoose = require('mongoose');
+
+const TOKEN_TOOLS = ['article', 'image', 'video', 'marketing', 'unknown'];
+
+const TokenUsageDailySchema = new mongoose.Schema({
+    dateKey: {
+        type: String,
+        required: true,
+        index: true
+    },
+    weekKey: {
+        type: String,
+        required: true,
+        index: true
+    },
+    monthKey: {
+        type: String,
+        required: true,
+        index: true
+    },
+    userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true,
+        index: true
+    },
+    actorUserId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: null
+    },
+    isImpersonating: {
+        type: Boolean,
+        default: false
+    },
+    tool: {
+        type: String,
+        enum: TOKEN_TOOLS,
+        required: true,
+        index: true
+    },
+    provider: {
+        type: String,
+        default: 'google-gemini'
+    },
+    model: {
+        type: String,
+        default: ''
+    },
+    requestCount: {
+        type: Number,
+        default: 0
+    },
+    promptTokens: {
+        type: Number,
+        default: 0
+    },
+    completionTokens: {
+        type: Number,
+        default: 0
+    },
+    totalTokens: {
+        type: Number,
+        default: 0
+    },
+    firstRequestAt: {
+        type: Date,
+        default: null
+    },
+    lastRequestAt: {
+        type: Date,
+        default: null
+    }
+}, {
+    timestamps: true
+});
+
+TokenUsageDailySchema.index(
+    { dateKey: 1, userId: 1, tool: 1, provider: 1 },
+    { unique: true }
+);
+TokenUsageDailySchema.index({ userId: 1, dateKey: 1 });
+TokenUsageDailySchema.index({ monthKey: 1 });
+TokenUsageDailySchema.index({ weekKey: 1 });
+
+module.exports = mongoose.model('TokenUsageDaily', TokenUsageDailySchema);

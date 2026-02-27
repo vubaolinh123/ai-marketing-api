@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const { User } = require('../models');
+const { appendRequestContext } = require('../utils');
 
 const IMPERSONATION_HEADER = 'x-act-as-user';
 const IMPERSONATION_ALLOWED_PREFIXES = [
@@ -119,6 +120,12 @@ const protect = async (req, res, next) => {
                 req.isImpersonating = true;
             }
         }
+
+        appendRequestContext({
+            actorUserId: req.actor?._id,
+            effectiveUserId: req.user?._id,
+            isImpersonating: !!req.isImpersonating
+        });
 
         next();
     } catch (error) {

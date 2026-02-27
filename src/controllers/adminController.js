@@ -1,4 +1,5 @@
 const { User, RefreshToken } = require('../models');
+const tokenUsageService = require('../services/tokenUsage.service');
 
 function toSafeUserPayload(user) {
     if (!user) return null;
@@ -311,6 +312,51 @@ exports.getImpersonationTargets = async (req, res, next) => {
         res.status(200).json({
             success: true,
             data: users.map(toSafeUserPayload)
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Admin: token usage summary
+// @route   GET /api/admin/token-usage/summary
+// @access  Private (admin)
+exports.getTokenUsageSummary = async (req, res, next) => {
+    try {
+        const data = await tokenUsageService.getTokenUsageSummary({
+            from: req.query.from,
+            to: req.query.to,
+            groupBy: req.query.groupBy,
+            userId: req.query.userId || null,
+            limitUsers: req.query.limitUsers
+        });
+
+        res.status(200).json({
+            success: true,
+            data
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Admin: token usage by users (paginated)
+// @route   GET /api/admin/token-usage/users
+// @access  Private (admin)
+exports.getTokenUsageUsers = async (req, res, next) => {
+    try {
+        const data = await tokenUsageService.getTokenUsageUsers({
+            from: req.query.from,
+            to: req.query.to,
+            page: req.query.page,
+            limit: req.query.limit,
+            search: req.query.search,
+            userId: req.query.userId || null
+        });
+
+        res.status(200).json({
+            success: true,
+            data
         });
     } catch (error) {
         next(error);

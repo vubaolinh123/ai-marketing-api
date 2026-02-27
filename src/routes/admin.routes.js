@@ -11,5 +11,7 @@ router.patch('/users/:id', adminController.updateUser);
 router.delete('/users/:id', adminController.deleteUser);
 router.patch('/users/:id/password', adminController.resetUserPassword);
 router.get('/impersonation-targets', adminController.getImpersonationTargets);
+router.get('/token-usage/summary', adminController.getTokenUsageSummary);
+router.get('/token-usage/users', adminController.getTokenUsageUsers);
 
 module.exports = router;
