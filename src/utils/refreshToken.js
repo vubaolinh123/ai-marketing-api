@@ -38,7 +38,7 @@ function buildRefreshCookieOptions(rememberMe) {
         httpOnly: true,
         secure,
         sameSite: 'lax',
-        path: '/api/auth/refresh',
+        path: '/api/auth',
         maxAge: expiresInDays * 24 * 60 * 60 * 1000
     };
 
@@ -54,7 +54,7 @@ function clearRefreshCookie(res) {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',
-        path: '/api/auth/refresh'
+        path: '/api/auth'
     });
 }
 
@@ -67,10 +67,42 @@ function computeExpiresAt(rememberMe) {
     return new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
 }
 
-async function createRefreshSession({ userId, rememberMe, family, createdByIp, userAgent }) {
+function normalizeBrowserGeo(browserGeo = {}) {
+    return {
+        latitude: typeof browserGeo.latitude === 'number' ? browserGeo.latitude : null,
+        longitude: typeof browserGeo.longitude === 'number' ? browserGeo.longitude : null,
+        accuracy: typeof browserGeo.accuracy === 'number' ? browserGeo.accuracy : null,
+        capturedAt: browserGeo.capturedAt instanceof Date ? browserGeo.capturedAt : null
+    };
+}
+
+function normalizeDeviceMeta(deviceMeta = {}) {
+    return {
+        platform: deviceMeta.platform || '',
+        language: deviceMeta.language || '',
+        timezone: deviceMeta.timezone || '',
+        screen: deviceMeta.screen || '',
+        deviceMemory: typeof deviceMeta.deviceMemory === 'number' ? deviceMeta.deviceMemory : null,
+        deviceCores: typeof deviceMeta.deviceCores === 'number' ? deviceMeta.deviceCores : null
+    };
+}
+
+async function createRefreshSession({
+    userId,
+    rememberMe,
+    family,
+    createdByIp,
+    userAgent,
+    location = {},
+    geoPermissionState = 'unknown',
+    browserGeo = {},
+    deviceMeta = {}
+}) {
     const tokenId = crypto.randomUUID();
     const token = signRefreshToken({ id: userId, jti: tokenId, family }, rememberMe);
     const tokenHash = hashToken(token);
+    const normalizedBrowserGeo = normalizeBrowserGeo(browserGeo);
+    const normalizedDeviceMeta = normalizeDeviceMeta(deviceMeta);
 
     const refreshTokenDoc = await RefreshToken.create({
         userId,
@@ -79,7 +111,23 @@ async function createRefreshSession({ userId, rememberMe, family, createdByIp, u
         isRememberMe: !!rememberMe,
         expiresAt: computeExpiresAt(rememberMe),
         createdByIp: createdByIp || '',
-        userAgent: userAgent || ''
+        userAgent: userAgent || '',
+        locationCountry: location.country || '',
+        locationRegion: location.region || '',
+        locationCity: location.city || '',
+        locationTimezone: location.timezone || '',
+        locationSource: location.source || '',
+        geoPermissionState: geoPermissionState || 'unknown',
+        browserGeoLat: normalizedBrowserGeo.latitude,
+        browserGeoLng: normalizedBrowserGeo.longitude,
+        browserGeoAccuracy: normalizedBrowserGeo.accuracy,
+        browserGeoCapturedAt: normalizedBrowserGeo.capturedAt,
+        devicePlatform: normalizedDeviceMeta.platform,
+        deviceLanguage: normalizedDeviceMeta.language,
+        deviceTimezone: normalizedDeviceMeta.timezone,
+        deviceScreen: normalizedDeviceMeta.screen,
+        deviceMemory: normalizedDeviceMeta.deviceMemory,
+        deviceCores: normalizedDeviceMeta.deviceCores
     });
 
     return {

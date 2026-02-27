@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const TOKEN_TOOLS = ['article', 'image', 'video', 'marketing', 'unknown'];
 
-const TokenUsageDailySchema = new mongoose.Schema({
+const TokenUsageFeatureDailySchema = new mongoose.Schema({
     dateKey: {
         type: String,
         required: true,
@@ -36,6 +36,11 @@ const TokenUsageDailySchema = new mongoose.Schema({
     tool: {
         type: String,
         enum: TOKEN_TOOLS,
+        required: true,
+        index: true
+    },
+    featureKey: {
+        type: String,
         required: true,
         index: true
     },
@@ -103,12 +108,13 @@ const TokenUsageDailySchema = new mongoose.Schema({
     timestamps: true
 });
 
-TokenUsageDailySchema.index(
-    { dateKey: 1, userId: 1, tool: 1, provider: 1 },
+TokenUsageFeatureDailySchema.index(
+    { dateKey: 1, userId: 1, featureKey: 1, provider: 1 },
     { unique: true }
 );
-TokenUsageDailySchema.index({ userId: 1, dateKey: 1 });
-TokenUsageDailySchema.index({ monthKey: 1 });
-TokenUsageDailySchema.index({ weekKey: 1 });
+TokenUsageFeatureDailySchema.index({ userId: 1, dateKey: 1 });
+TokenUsageFeatureDailySchema.index({ featureKey: 1, dateKey: 1 });
+TokenUsageFeatureDailySchema.index({ monthKey: 1 });
+TokenUsageFeatureDailySchema.index({ weekKey: 1 });
 
-module.exports = mongoose.model('TokenUsageDaily', TokenUsageDailySchema);
+module.exports = mongoose.model('TokenUsageFeatureDaily', TokenUsageFeatureDailySchema);

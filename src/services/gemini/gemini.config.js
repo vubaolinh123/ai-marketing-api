@@ -83,6 +83,27 @@ function buildGeminiInputMeta(payload) {
     };
 }
 
+function estimatePromptTokens(payload) {
+    const estimateFromChars = (chars) => {
+        if (!Number.isFinite(chars) || chars <= 0) return 0;
+        return Math.max(1, Math.ceil(chars / 4));
+    };
+
+    if (typeof payload === 'string') {
+        return estimateFromChars(payload.length);
+    }
+
+    if (Array.isArray(payload)) {
+        const textChars = payload
+            .filter((item) => typeof item === 'string')
+            .reduce((total, item) => total + item.length, 0);
+
+        return estimateFromChars(textChars);
+    }
+
+    return 0;
+}
+
 function getErrorCode(error) {
     if (!error) return 500;
     return Number(error.status || error.statusCode || 500);
@@ -129,7 +150,9 @@ function createLoggedModel(model, { modelName, type }) {
                     recordGeminiTokenUsage({
                         modelName,
                         operation: 'generateContent',
-                        responsePayload: response
+                        responsePayload: response,
+                        fallbackPromptTokens: estimatePromptTokens(inputPayload),
+                        fallbackSource: 'prompt-char-estimate-v1'
                     }).catch((tokenLogError) => {
                         logWarn('Gemini token usage logging skipped due to error', {
                             modelName,

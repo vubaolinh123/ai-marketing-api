@@ -1,5 +1,24 @@
+const mongoose = require('mongoose');
 const { User, RefreshToken } = require('../models');
 const tokenUsageService = require('../services/tokenUsage.service');
+const { hashToken, readRefreshTokenFromRequest } = require('../utils/refreshToken');
+const {
+    listUserSessions,
+    markLoginHistoryRevoked
+} = require('../services/sessionDevice.service');
+const { parseClientIp, normalizeIp } = require('../services/deviceLocation.service');
+
+function getClientIp(req) {
+    return normalizeIp(parseClientIp(req));
+}
+
+function setNoCacheHeaders(res) {
+    res.set({
+        'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+        Pragma: 'no-cache',
+        Expires: '0'
+    });
+}
 
 function toSafeUserPayload(user) {
     if (!user) return null;
@@ -331,6 +350,8 @@ exports.getTokenUsageSummary = async (req, res, next) => {
             limitUsers: req.query.limitUsers
         });
 
+        setNoCacheHeaders(res);
+
         res.status(200).json({
             success: true,
             data
@@ -354,9 +375,149 @@ exports.getTokenUsageUsers = async (req, res, next) => {
             userId: req.query.userId || null
         });
 
+        setNoCacheHeaders(res);
+
         res.status(200).json({
             success: true,
             data
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Admin: token usage debug recent records
+// @route   GET /api/admin/token-usage/debug/recent
+// @access  Private (admin)
+exports.getTokenUsageDebugRecent = async (req, res, next) => {
+    try {
+        const data = await tokenUsageService.getRecentTokenUsageDebug({
+            limit: req.query.limit
+        });
+
+        setNoCacheHeaders(res);
+
+        res.status(200).json({
+            success: true,
+            data
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Admin: get sessions of a user
+// @route   GET /api/admin/users/:id/sessions
+// @access  Private (admin)
+exports.getUserSessions = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({
+                success: false,
+                message: 'ID người dùng không hợp lệ'
+            });
+        }
+
+        const targetUser = await User.findById(id).select('_id');
+        if (!targetUser) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy người dùng'
+            });
+        }
+
+        const refreshToken = readRefreshTokenFromRequest(req);
+        const currentTokenHash = refreshToken ? hashToken(refreshToken) : '';
+        const sessions = await listUserSessions(id, currentTokenHash);
+
+        res.status(200).json({
+            success: true,
+            message: 'Lấy danh sách phiên đăng nhập thành công',
+            data: {
+                sessions
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Admin: revoke one session of a user
+// @route   POST /api/admin/users/:id/sessions/:sessionId/revoke
+// @access  Private (admin)
+exports.revokeUserSession = async (req, res, next) => {
+    try {
+        const actor = req.actor || req.user;
+        const { id, sessionId } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({
+                success: false,
+                message: 'ID người dùng không hợp lệ'
+            });
+        }
+
+        if (!mongoose.Types.ObjectId.isValid(sessionId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Session ID không hợp lệ'
+            });
+        }
+
+        const targetUser = await User.findById(id).select('_id');
+        if (!targetUser) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy người dùng'
+            });
+        }
+
+        const [sessionDoc, hasHistory] = await Promise.all([
+            RefreshToken.findById(sessionId),
+            User.exists({ _id: id, 'loginHistory.sessionId': String(sessionId) })
+        ]);
+
+        if (sessionDoc && String(sessionDoc.userId) !== String(id)) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy phiên đăng nhập'
+            });
+        }
+
+        if (!sessionDoc && !hasHistory) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy phiên đăng nhập'
+            });
+        }
+
+        const requestIp = getClientIp(req);
+        const revokedAt = sessionDoc?.revokedAt || new Date();
+
+        if (sessionDoc && !sessionDoc.revokedAt) {
+            sessionDoc.revokedAt = revokedAt;
+            sessionDoc.lastUsedAt = revokedAt;
+            sessionDoc.lastUsedIp = requestIp;
+            sessionDoc.revokedBy = actor._id || actor.id;
+            sessionDoc.revokeReason = 'admin-force-logout';
+            await sessionDoc.save();
+        }
+
+        await markLoginHistoryRevoked(
+            id,
+            sessionId,
+            sessionDoc?.revokeReason || 'admin-force-logout',
+            revokedAt
+        );
+
+        res.status(200).json({
+            success: true,
+            message: 'Thu hồi phiên đăng nhập thành công',
+            data: {
+                sessionId: String(sessionId)
+            }
         });
     } catch (error) {
         next(error);
