@@ -412,6 +412,7 @@ exports.getTokenUsageDebugRecent = async (req, res, next) => {
 exports.getUserSessions = async (req, res, next) => {
     try {
         const { id } = req.params;
+        const includeRevoked = String(req.query.includeRevoked || '').trim().toLowerCase() === 'true';
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(400).json({
@@ -430,13 +431,15 @@ exports.getUserSessions = async (req, res, next) => {
 
         const refreshToken = readRefreshTokenFromRequest(req);
         const currentTokenHash = refreshToken ? hashToken(refreshToken) : '';
-        const sessions = await listUserSessions(id, currentTokenHash);
+        const sessions = await listUserSessions(id, currentTokenHash, { includeRevoked });
 
         res.status(200).json({
             success: true,
             message: 'Lấy danh sách phiên đăng nhập thành công',
             data: {
-                sessions
+                sessions,
+                activeSessions: sessions,
+                loginHistory: sessions
             }
         });
     } catch (error) {

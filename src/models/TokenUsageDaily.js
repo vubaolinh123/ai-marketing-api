@@ -108,7 +108,5 @@ TokenUsageDailySchema.index(
     { unique: true }
 );
 TokenUsageDailySchema.index({ userId: 1, dateKey: 1 });
-TokenUsageDailySchema.index({ monthKey: 1 });
-TokenUsageDailySchema.index({ weekKey: 1 });
 
 module.exports = mongoose.model('TokenUsageDaily', TokenUsageDailySchema);

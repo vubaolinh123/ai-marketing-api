@@ -132,7 +132,4 @@ const AISettingsSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Index để tìm kiếm nhanh theo userId
-AISettingsSchema.index({ userId: 1 });
-
 module.exports = mongoose.model('AISettings', AISettingsSchema);

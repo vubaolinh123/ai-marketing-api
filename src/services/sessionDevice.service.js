@@ -78,6 +78,18 @@ async function markLoginHistoryRevoked(userId, sessionId, reason, revokedAt = ne
             arrayFilters: [{ 'entry.sessionId': String(sessionId) }]
         }
     );
+
+    await User.updateOne(
+        { _id: userId },
+        {
+            $pull: {
+                loginHistory: {
+                    sessionId: String(sessionId),
+                    revokedAt: { $ne: null }
+                }
+            }
+        }
+    );
 }
 
 function toSessionLocation(tokenDoc, historyEntry) {
@@ -166,7 +178,12 @@ function toSessionItemFromHistoryOnly(historyEntry) {
     };
 }
 
-async function listUserSessions(userId, currentTokenHash = '') {
+function isRevokedSessionItem(session = {}) {
+    return !!(session.revokedAt || session.isRevoked);
+}
+
+async function listUserSessions(userId, currentTokenHash = '', options = {}) {
+    const includeRevoked = !!options.includeRevoked;
     const user = await User.findById(userId).select('loginHistory');
     if (!user) return [];
 
@@ -182,13 +199,13 @@ async function listUserSessions(userId, currentTokenHash = '') {
     });
 
     const tokenFilter = { userId };
-    if (historySessionIds.length > 0) {
+    if (!includeRevoked) {
+        tokenFilter.revokedAt = null;
+    } else if (historySessionIds.length > 0) {
         tokenFilter.$or = [
             { revokedAt: null },
             { _id: { $in: historySessionIds } }
         ];
-    } else {
-        tokenFilter.revokedAt = null;
     }
 
     const tokens = await RefreshToken.find(tokenFilter).sort({ createdAt: -1 });
@@ -200,19 +217,25 @@ async function listUserSessions(userId, currentTokenHash = '') {
         return toSessionItemFromToken(tokenDoc, historyBySessionId.get(id), currentTokenHash);
     });
 
-    loginHistory.forEach((entry) => {
-        const sessionId = String(entry.sessionId || '');
-        if (!sessionId || tokenSessionIds.has(sessionId)) return;
-        sessions.push(toSessionItemFromHistoryOnly(entry));
-    });
+    if (includeRevoked) {
+        loginHistory.forEach((entry) => {
+            const sessionId = String(entry.sessionId || '');
+            if (!sessionId || tokenSessionIds.has(sessionId)) return;
+            sessions.push(toSessionItemFromHistoryOnly(entry));
+        });
+    }
 
-    sessions.sort((a, b) => {
+    const visibleSessions = includeRevoked
+        ? sessions
+        : sessions.filter((session) => session.isActive && !isRevokedSessionItem(session));
+
+    visibleSessions.sort((a, b) => {
         const first = a.createdAt ? new Date(a.createdAt).getTime() : 0;
         const second = b.createdAt ? new Date(b.createdAt).getTime() : 0;
         return second - first;
     });
 
-    return sessions;
+    return visibleSessions;
 }
 
 module.exports = {

@@ -533,14 +533,17 @@ const logoutAll = async (req, res, next) => {
 const getSessions = async (req, res, next) => {
     try {
         const actor = req.actor || req.user;
+        const includeRevoked = String(req.query.includeRevoked || '').trim().toLowerCase() === 'true';
         const currentTokenHash = getCurrentRefreshTokenHash(req);
-        const sessions = await listUserSessions(actor.id, currentTokenHash);
+        const sessions = await listUserSessions(actor.id, currentTokenHash, { includeRevoked });
 
         res.status(200).json({
             success: true,
             message: 'Lấy danh sách phiên đăng nhập thành công',
             data: {
-                sessions
+                sessions,
+                activeSessions: sessions,
+                loginHistory: sessions
             }
         });
     } catch (error) {

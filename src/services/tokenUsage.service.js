@@ -737,9 +737,9 @@ async function getTokenUsageSummary({ from, to, groupBy = 'day', userId = null, 
     }
 
     const timelineBucketField = normalizedGroupBy === 'week'
-        ? '$weekKey'
+        ? { $ifNull: ['$weekKey', '$dateKey'] }
         : normalizedGroupBy === 'month'
-            ? '$monthKey'
+            ? { $ifNull: ['$monthKey', { $substrBytes: ['$dateKey', 0, 7] }] }
             : '$dateKey';
 
     const [totalsRaw, timelineRaw, topToolsRaw, topUsersRaw, topFeaturesRaw, activeUsersRaw] = await Promise.all([
@@ -917,6 +917,7 @@ async function getTokenUsageUsers({ from, to, page = 1, limit = 20, search = '',
                 ...buildTokenGroupAccumulators(),
                 firstRequestAt: { $min: '$firstRequestAt' },
                 lastRequestAt: { $max: '$lastRequestAt' },
+                lastUpdatedAt: { $max: '$updatedAt' },
                 activeTools: { $addToSet: '$tool' }
             }
         },
@@ -982,8 +983,8 @@ async function getTokenUsageUsers({ from, to, page = 1, limit = 20, search = '',
                                 }
                             },
                             firstUsedAt: '$firstRequestAt',
-                            lastUsedAt: '$lastRequestAt',
-                            updatedAt: '$lastRequestAt'
+                            lastUsedAt: { $ifNull: ['$lastRequestAt', '$lastUpdatedAt'] },
+                            updatedAt: '$lastUpdatedAt'
                         }
                     }
                 ],
