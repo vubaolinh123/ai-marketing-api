@@ -650,6 +650,64 @@ function normalizeLimit(value, fallback, min, max) {
     return parsed;
 }
 
+function parseDateKeyToUtcDate(dateKey = '') {
+    if (!isDateKey(dateKey)) {
+        return null;
+    }
+
+    const [year, month, day] = String(dateKey).split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day));
+}
+
+function getBucketKeyFromDateKey(dateKey = '', groupBy = 'day') {
+    if (!dateKey) {
+        return '';
+    }
+
+    const normalizedGroupBy = normalizeGroupBy(groupBy);
+    if (normalizedGroupBy === 'day') {
+        return dateKey;
+    }
+
+    const utcDate = parseDateKeyToUtcDate(dateKey);
+    if (!utcDate) {
+        return dateKey;
+    }
+
+    if (normalizedGroupBy === 'week') {
+        return formatWeekKey(utcDate);
+    }
+
+    if (normalizedGroupBy === 'month') {
+        return formatMonthKey(utcDate);
+    }
+
+    return dateKey;
+}
+
+function buildBucketSeries({ fromKey, toKey, groupBy = 'day' } = {}) {
+    if (!fromKey || !toKey) {
+        return [];
+    }
+
+    const buckets = [];
+    const seen = new Set();
+    let cursor = fromKey;
+    let guard = 0;
+
+    while (cursor <= toKey && guard < 10000) {
+        const bucket = getBucketKeyFromDateKey(cursor, groupBy);
+        if (bucket && !seen.has(bucket)) {
+            seen.add(bucket);
+            buckets.push(bucket);
+        }
+        cursor = addDaysToDateKey(cursor, 1);
+        guard += 1;
+    }
+
+    return buckets;
+}
+
 function buildTokenGroupAccumulators() {
     return {
         requestCount: { $sum: { $ifNull: ['$requestCount', 0] } },
@@ -701,6 +759,18 @@ async function getTokenUsageSummary({ from, to, groupBy = 'day', userId = null, 
     const normalizedGroupBy = normalizeGroupBy(groupBy);
     const normalizedLimitUsers = normalizeLimit(limitUsers, 20, 1, 100);
     const userObjectId = toObjectIdOrNull(userId);
+    const bucketSeries = buildBucketSeries({
+        fromKey: range.fromKey,
+        toKey: range.toKey,
+        groupBy: normalizedGroupBy
+    });
+    const zeroUsage = normalizeTokenUsage(ZERO_TOKEN_USAGE);
+    const chartMeta = {
+        groupBy: normalizedGroupBy,
+        bucketCount: bucketSeries.length,
+        from: range.fromKey,
+        to: range.toKey
+    };
 
     const match = {
         dateKey: {
@@ -715,7 +785,15 @@ async function getTokenUsageSummary({ from, to, groupBy = 'day', userId = null, 
                 ...ZERO_TOKEN_USAGE,
                 activeUsers: 0
             },
-            timeline: [],
+            timeline: bucketSeries.map((bucket) => ({
+                bucket,
+                ...zeroUsage
+            })),
+            timelineByTool: bucketSeries.flatMap((bucket) => TOOL_ENUM.map((tool) => ({
+                bucket,
+                tool,
+                ...zeroUsage
+            }))),
             topTools: TOOL_ENUM.map((tool) => ({
                 tool,
                 ...ZERO_TOKEN_USAGE
@@ -723,6 +801,7 @@ async function getTokenUsageSummary({ from, to, groupBy = 'day', userId = null, 
             topUsers: [],
             topFeatures: [],
             discrepancy: { ...ZERO_DISCREPANCY },
+            chartMeta,
             range: {
                 from: range.fromKey,
                 to: range.toKey,
@@ -742,7 +821,7 @@ async function getTokenUsageSummary({ from, to, groupBy = 'day', userId = null, 
             ? { $ifNull: ['$monthKey', { $substrBytes: ['$dateKey', 0, 7] }] }
             : '$dateKey';
 
-    const [totalsRaw, timelineRaw, topToolsRaw, topUsersRaw, topFeaturesRaw, activeUsersRaw] = await Promise.all([
+    const [totalsRaw, timelineRaw, timelineByToolRaw, topToolsRaw, topUsersRaw, topFeaturesRaw, activeUsersRaw] = await Promise.all([
         TokenUsageDaily.aggregate([
             { $match: match },
             {
@@ -761,6 +840,19 @@ async function getTokenUsageSummary({ from, to, groupBy = 'day', userId = null, 
                 }
             },
             { $sort: { _id: 1 } }
+        ]),
+        TokenUsageDaily.aggregate([
+            { $match: match },
+            {
+                $group: {
+                    _id: {
+                        bucket: timelineBucketField,
+                        tool: { $ifNull: ['$tool', 'unknown'] }
+                    },
+                    ...buildTokenGroupAccumulators()
+                }
+            },
+            { $sort: { '_id.bucket': 1, '_id.tool': 1 } }
         ]),
         TokenUsageDaily.aggregate([
             { $match: match },
@@ -826,13 +918,48 @@ async function getTokenUsageSummary({ from, to, groupBy = 'day', userId = null, 
 
     totals.activeUsers = activeUsersRaw[0]?.count || 0;
 
-    const timeline = timelineRaw.map((item) => ({
-        bucket: item._id,
-        ...normalizeTokenUsage(item)
+    const timelineMap = new Map(
+        timelineRaw.map((item) => [String(item._id || ''), normalizeTokenUsage(item)])
+    );
+
+    const timeline = bucketSeries.map((bucket) => ({
+        bucket,
+        ...(timelineMap.get(bucket) || zeroUsage)
     }));
 
+    const knownTools = new Set(TOOL_ENUM);
+    topToolsRaw.forEach((item) => {
+        if (item?._id) {
+            knownTools.add(item._id);
+        }
+    });
+    timelineByToolRaw.forEach((item) => {
+        if (item?._id?.tool) {
+            knownTools.add(item._id.tool);
+        }
+    });
+
+    const additionalTools = Array.from(knownTools)
+        .filter((tool) => !TOOL_ENUM.includes(tool))
+        .sort((a, b) => String(a).localeCompare(String(b)));
+    const toolSeries = [...TOOL_ENUM, ...additionalTools];
+
+    const timelineByToolMap = new Map(
+        timelineByToolRaw.map((item) => {
+            const bucket = String(item?._id?.bucket || '');
+            const tool = item?._id?.tool || 'unknown';
+            return [`${bucket}::${tool}`, normalizeTokenUsage(item)];
+        })
+    );
+
+    const timelineByTool = bucketSeries.flatMap((bucket) => toolSeries.map((tool) => ({
+        bucket,
+        tool,
+        ...(timelineByToolMap.get(`${bucket}::${tool}`) || zeroUsage)
+    })));
+
     const topTools = topToolsRaw.map((item) => ({
-        tool: item._id,
+        tool: item._id || 'unknown',
         ...normalizeTokenUsage(item)
     }));
 
@@ -855,10 +982,12 @@ async function getTokenUsageSummary({ from, to, groupBy = 'day', userId = null, 
     return {
         totals,
         timeline,
+        timelineByTool,
         topTools,
         topUsers,
         topFeatures,
         discrepancy,
+        chartMeta,
         range: {
             from: range.fromKey,
             to: range.toKey,
