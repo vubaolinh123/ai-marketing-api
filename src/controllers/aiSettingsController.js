@@ -13,6 +13,28 @@ function sanitizeAiModelsPayload(aiModels = {}) {
     };
 }
 
+function normalizeFacebookPayload(facebook) {
+    if (!facebook || typeof facebook !== 'object') {
+        return facebook;
+    }
+
+    const normalized = { ...facebook };
+
+    if (normalized.facebookPageId === undefined && normalized.pageId !== undefined) {
+        normalized.facebookPageId = normalized.pageId;
+    }
+
+    if (normalized.facebookPageName === undefined && normalized.pageName !== undefined) {
+        normalized.facebookPageName = normalized.pageName;
+    }
+
+    if (normalized.facebookTokenExpiresAt === undefined && normalized.tokenExpiresAt !== undefined) {
+        normalized.facebookTokenExpiresAt = normalized.tokenExpiresAt;
+    }
+
+    return normalized;
+}
+
 // Default settings structure
 const defaultSettings = {
     logo: {
@@ -93,7 +115,7 @@ const updateSettings = async (req, res, next) => {
         if (language !== undefined) updateData.language = language;
         if (tone !== undefined) updateData.tone = tone;
         if (product !== undefined) updateData.product = product;
-        if (facebook !== undefined) updateData.facebook = facebook;
+        if (facebook !== undefined) updateData.facebook = normalizeFacebookPayload(facebook);
         if (aiModels !== undefined) updateData.aiModels = sanitizeAiModelsPayload(aiModels);
 
         let settings = await AISettings.findOneAndUpdate(
@@ -129,7 +151,9 @@ const updateSection = async (req, res, next) => {
 
         const sectionPayload = section === 'aiModels'
             ? sanitizeAiModelsPayload(req.body)
-            : req.body;
+            : section === 'facebook'
+                ? normalizeFacebookPayload(req.body)
+                : req.body;
 
         const updateData = {
             [section]: sectionPayload
