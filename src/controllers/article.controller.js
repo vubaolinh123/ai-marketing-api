@@ -25,6 +25,107 @@ function buildFacebookPostMessage(article = {}) {
     return message.length > 60000 ? `${message.slice(0, 59997)}...` : message;
 }
 
+function normalizePathnameForCompare(rawUrl = '') {
+    const value = String(rawUrl || '').trim();
+    if (!value) {
+        return '';
+    }
+
+    try {
+        if (/^https?:\/\//i.test(value)) {
+            return new URL(value).pathname || '';
+        }
+
+        if (value.startsWith('//')) {
+            return new URL(`https:${value}`).pathname || '';
+        }
+
+        const withLeadingSlash = value.startsWith('/') ? value : `/${value}`;
+        return new URL(withLeadingSlash, 'http://localhost').pathname || '';
+    } catch (_error) {
+        return '';
+    }
+}
+
+function isSameImageReference(selectedUrl, sourceUrl) {
+    const selected = String(selectedUrl || '').trim();
+    const source = String(sourceUrl || '').trim();
+    if (!selected || !source) {
+        return false;
+    }
+
+    if (selected === source) {
+        return true;
+    }
+
+    const selectedPathname = normalizePathnameForCompare(selected);
+    const sourcePathname = normalizePathnameForCompare(source);
+    return !!selectedPathname && !!sourcePathname && selectedPathname === sourcePathname;
+}
+
+function resolveRequestOrigin(req) {
+    const forwardedProto = String(req.headers['x-forwarded-proto'] || '')
+        .split(',')[0]
+        .trim();
+    const forwardedHost = String(req.headers['x-forwarded-host'] || '')
+        .split(',')[0]
+        .trim();
+
+    const protocol = forwardedProto || req.protocol || 'http';
+    const host = forwardedHost || req.get('host') || '';
+    if (!host) {
+        return '';
+    }
+
+    return `${protocol}://${host}`;
+}
+
+function resolvePublicBaseUrl(req) {
+    const configuredBaseUrl = String(
+        process.env.API_PUBLIC_BASE_URL
+        || process.env.PUBLIC_API_BASE_URL
+        || ''
+    ).trim();
+
+    if (configuredBaseUrl) {
+        try {
+            const parsedUrl = new URL(configuredBaseUrl);
+            return parsedUrl.toString().replace(/\/$/, '');
+        } catch (_error) {
+            return configuredBaseUrl.replace(/\/$/, '');
+        }
+    }
+
+    return resolveRequestOrigin(req).replace(/\/$/, '');
+}
+
+function toFacebookImageUrl(rawImageUrl, baseUrl) {
+    const value = String(rawImageUrl || '').trim();
+    if (!value) {
+        return '';
+    }
+
+    if (/^https?:\/\//i.test(value)) {
+        return value;
+    }
+
+    if (value.startsWith('//')) {
+        return `https:${value}`;
+    }
+
+    const normalizedBaseUrl = String(baseUrl || '').trim();
+    if (!normalizedBaseUrl) {
+        throw new Error('Không xác định được URL public của server để chuyển đổi ảnh tương đối.');
+    }
+
+    const normalizedPath = value.replace(/\\/g, '/');
+    const pathWithLeadingSlash = normalizedPath.startsWith('/')
+        ? normalizedPath
+        : `/${normalizedPath}`;
+
+    return new URL(pathWithLeadingSlash, normalizedBaseUrl).toString();
+}
+
 /**
  * Create a new article
  * POST /api/articles
@@ -286,6 +387,28 @@ exports.deleteArticle = async (req, res) => {
  */
 exports.postArticleToFacebook = async (req, res) => {
     try {
+        const requestBody = req.body || {};
+        const hasSelectedImageUrlsField = Object.prototype.hasOwnProperty.call(requestBody, 'selectedImageUrls');
+        const selectedImageUrlsInput = requestBody.selectedImageUrls;
+
+        if (hasSelectedImageUrlsField && !Array.isArray(selectedImageUrlsInput)) {
+            return res.status(400).json({
+                success: false,
+                message: 'selectedImageUrls phải là mảng chuỗi URL.'
+            });
+        }
+
+        const normalizedSelectedImageUrls = hasSelectedImageUrlsField
+            ? selectedImageUrlsInput.map((imageUrl) => String(imageUrl || '').trim())
+            : [];
+
+        if (normalizedSelectedImageUrls.some((imageUrl) => !imageUrl)) {
+            return res.status(400).json({
+                success: false,
+                message: 'selectedImageUrls không được chứa giá trị rỗng.'
+            });
+        }
+
         const article = await Article.findOne({
             _id: req.params.id,
             userId: req.user._id
@@ -325,10 +448,41 @@ exports.postArticleToFacebook = async (req, res) => {
             });
         }
 
+        const articleImageUrls = Array.from(new Set([
+            ...(Array.isArray(article.imageUrls) ? article.imageUrls : []),
+            article.imageUrl
+        ].map((imageUrl) => String(imageUrl || '').trim()).filter(Boolean)));
+
+        const selectedImageUrls = hasSelectedImageUrlsField ? normalizedSelectedImageUrls : [];
+
+        if (selectedImageUrls.length > 0) {
+            if (articleImageUrls.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Bài viết không có ảnh nguồn để chọn đăng Facebook.'
+                });
+            }
+
+            const invalidSelectedImages = selectedImageUrls.filter((selectedUrl) => (
+                !articleImageUrls.some((sourceUrl) => isSameImageReference(selectedUrl, sourceUrl))
+            ));
+
+            if (invalidSelectedImages.length > 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'selectedImageUrls phải thuộc danh sách ảnh của bài viết.'
+                });
+            }
+        }
+
+        const baseUrl = resolvePublicBaseUrl(req);
+        const facebookImageUrls = selectedImageUrls.map((imageUrl) => toFacebookImageUrl(imageUrl, baseUrl));
+
         const publishResult = await publishPagePost({
             pageId: facebookPageId,
             pageToken: facebookToken,
-            message
+            message,
+            imageUrls: facebookImageUrls
         });
 
         return res.status(200).json({
@@ -337,7 +491,10 @@ exports.postArticleToFacebook = async (req, res) => {
             data: {
                 postId: publishResult.postId,
                 pageId: publishResult.pageId,
-                pageName: facebookPageName || null
+                pageName: facebookPageName || null,
+                imageCount: Array.isArray(publishResult.attachedPhotoIds)
+                    ? publishResult.attachedPhotoIds.length
+                    : 0
             }
         });
     } catch (error) {

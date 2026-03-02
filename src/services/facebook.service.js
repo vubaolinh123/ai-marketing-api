@@ -245,10 +245,13 @@ async function verifyPageAccessToken({ token }) {
     };
 }
 
-async function publishPagePost({ pageId, pageToken, message }) {
+async function publishPagePost({ pageId, pageToken, message, imageUrls = [] }) {
     const normalizedPageId = String(pageId || '').trim();
     const normalizedToken = String(pageToken || '').trim();
     const normalizedMessage = String(message || '').trim();
+    const normalizedImageUrls = Array.isArray(imageUrls)
+        ? imageUrls.map((url) => String(url || '').trim()).filter(Boolean)
+        : null;
 
     if (!normalizedPageId) {
         throw createHttpError(400, 'Thiếu facebookPageId. Vui lòng cấu hình Trang Facebook trước khi đăng bài.');
@@ -259,15 +262,52 @@ async function publishPagePost({ pageId, pageToken, message }) {
     if (!normalizedMessage) {
         throw createHttpError(400, 'Nội dung bài viết Facebook không được để trống.');
     }
+    if (normalizedImageUrls === null) {
+        throw createHttpError(400, 'Danh sách ảnh Facebook không hợp lệ.');
+    }
+
+    let attachedPhotoIds = [];
+
+    if (normalizedImageUrls.length > 0) {
+        for (let index = 0; index < normalizedImageUrls.length; index += 1) {
+            const imageUrl = normalizedImageUrls[index];
+            const uploadPhotoResult = await requestFacebookApi({
+                method: 'POST',
+                path: `/${encodeURIComponent(normalizedPageId)}/photos`,
+                body: {
+                    url: imageUrl,
+                    published: 'false',
+                    access_token: normalizedToken
+                },
+                fallbackMessage: `Không thể tải ảnh số ${index + 1} lên Trang Facebook.`
+            });
+
+            const mediaFbid = uploadPhotoResult?.id ? String(uploadPhotoResult.id) : '';
+            if (!mediaFbid) {
+                throw createHttpError(502, 'Facebook không trả về mã ảnh sau khi tải lên. Vui lòng thử lại.');
+            }
+
+            attachedPhotoIds.push(mediaFbid);
+        }
+    }
 
     const publishResult = await requestFacebookApi({
         method: 'POST',
         path: `/${encodeURIComponent(normalizedPageId)}/feed`,
         body: {
             message: normalizedMessage,
+            ...(attachedPhotoIds.length > 0
+                ? {
+                    attached_media: JSON.stringify(
+                        attachedPhotoIds.map((media_fbid) => ({ media_fbid }))
+                    )
+                }
+                : {}),
             access_token: normalizedToken
         },
-        fallbackMessage: 'Không thể đăng bài lên Trang Facebook.'
+        fallbackMessage: attachedPhotoIds.length > 0
+            ? 'Không thể đăng bài kèm ảnh lên Trang Facebook.'
+            : 'Không thể đăng bài lên Trang Facebook.'
     });
 
     const postId = publishResult?.id ? String(publishResult.id) : '';
@@ -275,10 +315,16 @@ async function publishPagePost({ pageId, pageToken, message }) {
         throw createHttpError(502, 'Facebook không trả về mã bài đăng. Vui lòng thử lại.');
     }
 
-    return {
+    const responsePayload = {
         postId,
         pageId: normalizedPageId
     };
+
+    if (attachedPhotoIds.length > 0) {
+        responsePayload.attachedPhotoIds = attachedPhotoIds;
+    }
+
+    return responsePayload;
 }
 
 module.exports = {
