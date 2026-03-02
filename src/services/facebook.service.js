@@ -131,7 +131,7 @@ async function requestFacebookApi({ method = 'GET', path, query = {}, body = nul
     }
 }
 
-function getAppAccessToken() {
+function getAppAccessTokenOptional() {
     const explicitAppToken = String(process.env.FB_APP_ACCESS_TOKEN || '').trim();
     if (explicitAppToken) {
         return explicitAppToken;
@@ -141,10 +141,65 @@ function getAppAccessToken() {
     const appSecret = String(process.env.FB_APP_SECRET || '').trim();
 
     if (!appId || !appSecret) {
-        throw createHttpError(500, 'Server chưa cấu hình Facebook App (FB_APP_ID/FB_APP_SECRET).');
+        return '';
     }
 
     return `${appId}|${appSecret}`;
+}
+
+async function tryResolvePageFromToken(token) {
+    // Ưu tiên /me/accounts (token user có quyền page sẽ lấy được danh sách page)
+    try {
+        const accountsResult = await requestFacebookApi({
+            method: 'GET',
+            path: '/me/accounts',
+            query: {
+                access_token: token,
+                fields: 'id,name'
+            },
+            fallbackMessage: 'Không thể lấy danh sách Trang từ token Facebook.'
+        });
+
+        const firstPage = Array.isArray(accountsResult?.data) ? accountsResult.data[0] : null;
+        if (firstPage?.id) {
+            return {
+                pageId: String(firstPage.id),
+                pageName: firstPage?.name ? String(firstPage.name) : null,
+                isValid: true
+            };
+        }
+    } catch (_error) {
+        // fallback below
+    }
+
+    // Fallback: với page access token, /me có thể trả thẳng page profile
+    try {
+        const meResult = await requestFacebookApi({
+            method: 'GET',
+            path: '/me',
+            query: {
+                access_token: token,
+                fields: 'id,name'
+            },
+            fallbackMessage: 'Không thể đọc thông tin chủ thể token Facebook.'
+        });
+
+        if (meResult?.id) {
+            return {
+                pageId: String(meResult.id),
+                pageName: meResult?.name ? String(meResult.name) : null,
+                isValid: true
+            };
+        }
+    } catch (_error) {
+        // invalid or unauthorized token
+    }
+
+    return {
+        pageId: null,
+        pageName: null,
+        isValid: false
+    };
 }
 
 async function verifyPageAccessToken({ token }) {
@@ -153,50 +208,40 @@ async function verifyPageAccessToken({ token }) {
         throw createHttpError(400, 'Thiếu token Facebook để xác minh.');
     }
 
-    const appAccessToken = getAppAccessToken();
-    const debugResult = await requestFacebookApi({
-        method: 'GET',
-        path: '/debug_token',
-        query: {
-            input_token: normalizedToken,
-            access_token: appAccessToken
-        },
-        fallbackMessage: 'Không thể xác minh token Facebook.'
-    });
+    const appAccessToken = getAppAccessTokenOptional();
+    let debugData = null;
 
-    const debugData = debugResult?.data || {};
-    const isValid = !!debugData.is_valid;
-
-    let pageId = null;
-    let pageName = null;
-
-    if (isValid) {
+    if (appAccessToken) {
         try {
-            const accountsResult = await requestFacebookApi({
+            const debugResult = await requestFacebookApi({
                 method: 'GET',
-                path: '/me/accounts',
+                path: '/debug_token',
                 query: {
-                    access_token: normalizedToken,
-                    fields: 'id,name'
+                    input_token: normalizedToken,
+                    access_token: appAccessToken
                 },
-                fallbackMessage: 'Không thể lấy danh sách Trang từ token Facebook.'
+                fallbackMessage: 'Không thể xác minh token Facebook.'
             });
-
-            const firstPage = Array.isArray(accountsResult?.data) ? accountsResult.data[0] : null;
-            pageId = firstPage?.id ? String(firstPage.id) : null;
-            pageName = firstPage?.name ? String(firstPage.name) : null;
+            debugData = debugResult?.data || null;
         } catch (_error) {
-            // Không fail verify nếu token hợp lệ nhưng không lấy được danh sách trang
+            // Không chặn verify nếu server chưa/không thể dùng debug_token
+            debugData = null;
         }
     }
 
+    const pageProbe = await tryResolvePageFromToken(normalizedToken);
+    const isValidByDebug = debugData ? !!debugData.is_valid : null;
+    const isValid = typeof isValidByDebug === 'boolean'
+        ? (isValidByDebug && pageProbe.isValid)
+        : pageProbe.isValid;
+
     return {
         isValid,
-        expiresAt: toIsoOrNull(debugData.expires_at),
-        dataAccessExpiresAt: toIsoOrNull(debugData.data_access_expires_at),
-        scopes: Array.isArray(debugData.scopes) ? debugData.scopes : [],
-        pageId,
-        pageName
+        expiresAt: toIsoOrNull(debugData?.expires_at),
+        dataAccessExpiresAt: toIsoOrNull(debugData?.data_access_expires_at),
+        scopes: Array.isArray(debugData?.scopes) ? debugData.scopes : [],
+        pageId: pageProbe.pageId,
+        pageName: pageProbe.pageName
     };
 }
 
