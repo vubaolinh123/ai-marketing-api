@@ -1,5 +1,6 @@
 const { AISettings } = require('../models');
 const { sanitizeModelForTask } = require('../services/gemini/modelConfig.service');
+const { verifyPageAccessToken } = require('../services/facebook.service');
 
 function sanitizeAiModelsPayload(aiModels = {}) {
     const currentModels = (aiModels && typeof aiModels === 'object') ? aiModels : {};
@@ -40,7 +41,10 @@ const defaultSettings = {
         suitableFor: []
     },
     facebook: {
-        facebookToken: ''
+        facebookToken: '',
+        facebookPageId: '',
+        facebookPageName: '',
+        facebookTokenExpiresAt: null
     },
     aiModels: {
         textModel: 'gemini-2.5-flash',
@@ -147,8 +151,43 @@ const updateSection = async (req, res, next) => {
     }
 };
 
+// @desc    Verify Facebook token (without saving)
+// @route   POST /api/ai-settings/facebook/verify
+// @access  Private
+const verifyFacebookToken = async (req, res, next) => {
+    try {
+        const facebookToken = String(req.body?.facebookToken || '').trim();
+
+        if (!facebookToken) {
+            return res.status(400).json({
+                success: false,
+                message: 'Vui lòng nhập token Facebook để xác minh.'
+            });
+        }
+
+        const verification = await verifyPageAccessToken({ token: facebookToken });
+
+        if (!verification.isValid) {
+            return res.status(400).json({
+                success: false,
+                message: 'Token Facebook không hợp lệ hoặc đã hết hạn.',
+                data: verification
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: 'Xác minh token Facebook thành công.',
+            data: verification
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     getSettings,
     updateSettings,
-    updateSection
+    updateSection,
+    verifyFacebookToken
 };

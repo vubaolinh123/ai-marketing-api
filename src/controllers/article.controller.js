@@ -1,9 +1,28 @@
 const Article = require('../models/Article');
+const AISettings = require('../models/AISettings');
 const { resolveArticlePurpose } = require('../utils/articlePurpose');
 const { deleteFileFromPath } = require('../utils/fileCleanup');
+const { publishPagePost } = require('../services/facebook.service');
 
 function escapeRegex(input = '') {
     return String(input).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildFacebookPostMessage(article = {}) {
+    const title = String(article.title || '').trim();
+    const content = String(article.content || '').trim();
+    const hashtags = Array.isArray(article.hashtags)
+        ? article.hashtags
+            .map((tag) => String(tag || '').trim())
+            .filter(Boolean)
+            .map((tag) => (tag.startsWith('#') ? tag : `#${tag}`))
+        : [];
+
+    const parts = [title, content, hashtags.join(' ')].filter(Boolean);
+    const message = parts.join('\n\n').trim();
+
+    // Giới hạn an toàn dưới mức tối đa của Facebook
+    return message.length > 60000 ? `${message.slice(0, 59997)}...` : message;
 }
 
 /**
@@ -257,6 +276,75 @@ exports.deleteArticle = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Không thể xóa bài viết'
+        });
+    }
+};
+
+/**
+ * Post article to Facebook Page
+ * POST /api/articles/:id/post-facebook
+ */
+exports.postArticleToFacebook = async (req, res) => {
+    try {
+        const article = await Article.findOne({
+            _id: req.params.id,
+            userId: req.user._id
+        });
+
+        if (!article) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy bài viết'
+            });
+        }
+
+        const settings = await AISettings.findOne({ userId: req.user._id }).lean();
+        const facebookToken = String(settings?.facebook?.facebookToken || '').trim();
+        const facebookPageId = String(settings?.facebook?.facebookPageId || '').trim();
+        const facebookPageName = String(settings?.facebook?.facebookPageName || '').trim();
+
+        if (!facebookToken) {
+            return res.status(400).json({
+                success: false,
+                message: 'Bạn chưa cấu hình token Facebook trong AI Settings.'
+            });
+        }
+
+        if (!facebookPageId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Bạn chưa cấu hình Page ID Facebook trong AI Settings.'
+            });
+        }
+
+        const message = buildFacebookPostMessage(article);
+        if (!message) {
+            return res.status(400).json({
+                success: false,
+                message: 'Bài viết không có nội dung để đăng Facebook.'
+            });
+        }
+
+        const publishResult = await publishPagePost({
+            pageId: facebookPageId,
+            pageToken: facebookToken,
+            message
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: 'Đăng bài lên Facebook thành công.',
+            data: {
+                postId: publishResult.postId,
+                pageId: publishResult.pageId,
+                pageName: facebookPageName || null
+            }
+        });
+    } catch (error) {
+        console.error('Post article to Facebook error:', error);
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || 'Không thể đăng bài lên Facebook.'
         });
     }
 };

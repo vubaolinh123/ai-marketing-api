@@ -8,6 +8,7 @@ router.use(protect);
 
 router.get('/', aiSettingsController.getSettings);
 router.put('/', aiSettingsController.updateSettings);
+router.post('/facebook/verify', aiSettingsController.verifyFacebookToken);
 router.patch('/:section', aiSettingsController.updateSection);
 
 module.exports = router;

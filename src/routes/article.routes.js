@@ -16,4 +16,6 @@ router.route('/:id')
     .put(articleController.updateArticle)
     .delete(articleController.deleteArticle);
 
+router.post('/:id/post-facebook', articleController.postArticleToFacebook);
+
 module.exports = router;

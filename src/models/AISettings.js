@@ -112,6 +112,20 @@ const AISettingsSchema = new mongoose.Schema({
             type: String,
             trim: true,
             default: ''
+        },
+        facebookPageId: {
+            type: String,
+            trim: true,
+            default: ''
+        },
+        facebookPageName: {
+            type: String,
+            trim: true,
+            default: ''
+        },
+        facebookTokenExpiresAt: {
+            type: Date,
+            default: null
         }
     },
     aiModels: {
