@@ -8,6 +8,56 @@ const {
 } = require('../services/sessionDevice.service');
 const { parseClientIp, normalizeIp } = require('../services/deviceLocation.service');
 
+const ROLE_USER = 'user';
+const ROLE_STAFF = 'staff';
+const ROLE_ADMIN = 'admin';
+const VALID_ROLES = [ROLE_ADMIN, ROLE_STAFF, ROLE_USER];
+
+function getActor(req) {
+    return req.actor || req.user;
+}
+
+function isStaffActor(actor) {
+    return actor?.role === ROLE_STAFF;
+}
+
+function isAdminActor(actor) {
+    return actor?.role === ROLE_ADMIN;
+}
+
+function denyStaffScope(res) {
+    return res.status(403).json({
+        success: false,
+        message: 'Tài khoản staff chỉ được quản lý người dùng role=user.'
+    });
+}
+
+function ensureStaffCanManageTarget(actor, targetUser, res) {
+    if (isStaffActor(actor) && targetUser.role !== ROLE_USER) {
+        denyStaffScope(res);
+        return false;
+    }
+
+    return true;
+}
+
+function ensureTokenUsageAdminOnly(actor, res) {
+    if (!isAdminActor(actor)) {
+        res.status(403).json({
+            success: false,
+            message: 'Chỉ admin mới có quyền truy cập thống kê token usage.'
+        });
+        return false;
+    }
+
+    return true;
+}
+
+function normalizeRoleInput(role) {
+    if (typeof role !== 'string') return role;
+    return role.trim().toLowerCase();
+}
+
 function getClientIp(req) {
     return normalizeIp(parseClientIp(req));
 }
@@ -38,8 +88,9 @@ function toSafeUserPayload(user) {
 function buildUserFilters(query = {}) {
     const filter = {};
 
-    if (query.role && ['admin', 'user'].includes(query.role)) {
-        filter.role = query.role;
+    const roleFilter = normalizeRoleInput(query.role);
+    if (roleFilter && VALID_ROLES.includes(roleFilter)) {
+        filter.role = roleFilter;
     }
 
     if (query.status === 'active') {
@@ -64,11 +115,19 @@ function buildUserFilters(query = {}) {
 // @access  Private (admin)
 exports.listUsers = async (req, res, next) => {
     try {
+        const actor = getActor(req);
+        const isStaff = isStaffActor(actor);
         const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
         const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
         const skip = (page - 1) * limit;
 
         const filter = buildUserFilters(req.query);
+
+        if (isStaff) {
+            filter.role = ROLE_USER;
+        }
+
+        const statsScopeFilter = isStaff ? { role: ROLE_USER } : {};
 
         const [users, total, activeCount, inactiveCount, adminCount, totalCount] = await Promise.all([
             User.find(filter)
@@ -76,10 +135,10 @@ exports.listUsers = async (req, res, next) => {
                 .skip(skip)
                 .limit(limit),
             User.countDocuments(filter),
-            User.countDocuments({ isActive: true }),
-            User.countDocuments({ isActive: false }),
-            User.countDocuments({ role: 'admin' }),
-            User.countDocuments({})
+            User.countDocuments({ ...statsScopeFilter, isActive: true }),
+            User.countDocuments({ ...statsScopeFilter, isActive: false }),
+            isStaff ? Promise.resolve(0) : User.countDocuments({ role: ROLE_ADMIN }),
+            User.countDocuments(statsScopeFilter)
         ]);
 
         const normalizedUsers = users.map(toSafeUserPayload);
@@ -113,7 +172,10 @@ exports.listUsers = async (req, res, next) => {
 // @access  Private (admin)
 exports.createUser = async (req, res, next) => {
     try {
+        const actor = getActor(req);
+        const isStaff = isStaffActor(actor);
         const { name, email, password, role = 'user', isActive = true } = req.body;
+        const normalizedRole = normalizeRoleInput(role) || ROLE_USER;
 
         if (!name || !email || !password) {
             return res.status(400).json({
@@ -122,11 +184,15 @@ exports.createUser = async (req, res, next) => {
             });
         }
 
-        if (!['admin', 'user'].includes(role)) {
+        if (!VALID_ROLES.includes(normalizedRole)) {
             return res.status(400).json({
                 success: false,
-                message: 'Role không hợp lệ. Chỉ chấp nhận admin hoặc user.'
+                message: 'Role không hợp lệ. Chỉ chấp nhận admin, staff hoặc user.'
             });
+        }
+
+        if (isStaff && normalizedRole !== ROLE_USER) {
+            return denyStaffScope(res);
         }
 
         const existing = await User.findOne({ email: String(email).toLowerCase().trim() });
@@ -141,7 +207,7 @@ exports.createUser = async (req, res, next) => {
             name,
             email,
             password,
-            role,
+            role: isStaff ? ROLE_USER : normalizedRole,
             isActive
         });
 
@@ -162,6 +228,7 @@ exports.updateUser = async (req, res, next) => {
     try {
         const { id } = req.params;
         const { name, role, isActive } = req.body;
+        const normalizedRole = normalizeRoleInput(role);
 
         const user = await User.findById(id);
         if (!user) {
@@ -171,7 +238,17 @@ exports.updateUser = async (req, res, next) => {
             });
         }
 
-        const actor = req.actor || req.user;
+        const actor = getActor(req);
+        const isStaff = isStaffActor(actor);
+
+        if (!ensureStaffCanManageTarget(actor, user, res)) {
+            return;
+        }
+
+        if (isStaff && normalizedRole !== undefined && normalizedRole !== ROLE_USER) {
+            return denyStaffScope(res);
+        }
+
         if (String(user._id) === String(actor._id)) {
             if (role && role !== user.role) {
                 return res.status(400).json({
@@ -191,14 +268,14 @@ exports.updateUser = async (req, res, next) => {
         const updateData = {};
         if (typeof name === 'string') updateData.name = name;
 
-        if (role !== undefined) {
-            if (!['admin', 'user'].includes(role)) {
+        if (!isStaff && role !== undefined) {
+            if (!VALID_ROLES.includes(normalizedRole)) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Role không hợp lệ. Chỉ chấp nhận admin hoặc user.'
+                    message: 'Role không hợp lệ. Chỉ chấp nhận admin, staff hoặc user.'
                 });
             }
-            updateData.role = role;
+            updateData.role = normalizedRole;
         }
 
         if (typeof isActive === 'boolean') {
@@ -236,7 +313,7 @@ exports.deleteUser = async (req, res, next) => {
             });
         }
 
-        const actor = req.actor || req.user;
+        const actor = getActor(req);
         if (String(user._id) === String(actor._id)) {
             return res.status(400).json({
                 success: false,
@@ -244,8 +321,12 @@ exports.deleteUser = async (req, res, next) => {
             });
         }
 
-        if (user.role === 'admin') {
-            const adminCount = await User.countDocuments({ role: 'admin' });
+        if (!ensureStaffCanManageTarget(actor, user, res)) {
+            return;
+        }
+
+        if (user.role === ROLE_ADMIN) {
+            const adminCount = await User.countDocuments({ role: ROLE_ADMIN });
             if (adminCount <= 1) {
                 return res.status(400).json({
                     success: false,
@@ -271,6 +352,7 @@ exports.deleteUser = async (req, res, next) => {
 // @access  Private (admin)
 exports.resetUserPassword = async (req, res, next) => {
     try {
+        const actor = getActor(req);
         const { id } = req.params;
         const { newPassword } = req.body;
 
@@ -287,6 +369,10 @@ exports.resetUserPassword = async (req, res, next) => {
                 success: false,
                 message: 'Không tìm thấy người dùng'
             });
+        }
+
+        if (!ensureStaffCanManageTarget(actor, user, res)) {
+            return;
         }
 
         user.password = newPassword;
@@ -311,11 +397,15 @@ exports.resetUserPassword = async (req, res, next) => {
 // @access  Private (admin)
 exports.getImpersonationTargets = async (req, res, next) => {
     try {
-        const actor = req.actor || req.user;
+        const actor = getActor(req);
         const search = String(req.query.search || '').trim();
         const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
 
         const filter = { isActive: true, _id: { $ne: actor._id } };
+
+        if (isStaffActor(actor)) {
+            filter.role = ROLE_USER;
+        }
 
         if (search) {
             filter.$or = [
@@ -342,6 +432,11 @@ exports.getImpersonationTargets = async (req, res, next) => {
 // @access  Private (admin)
 exports.getTokenUsageSummary = async (req, res, next) => {
     try {
+        const actor = getActor(req);
+        if (!ensureTokenUsageAdminOnly(actor, res)) {
+            return;
+        }
+
         const data = await tokenUsageService.getTokenUsageSummary({
             from: req.query.from,
             to: req.query.to,
@@ -366,6 +461,11 @@ exports.getTokenUsageSummary = async (req, res, next) => {
 // @access  Private (admin)
 exports.getTokenUsageUsers = async (req, res, next) => {
     try {
+        const actor = getActor(req);
+        if (!ensureTokenUsageAdminOnly(actor, res)) {
+            return;
+        }
+
         const data = await tokenUsageService.getTokenUsageUsers({
             from: req.query.from,
             to: req.query.to,
@@ -391,6 +491,11 @@ exports.getTokenUsageUsers = async (req, res, next) => {
 // @access  Private (admin)
 exports.getTokenUsageDebugRecent = async (req, res, next) => {
     try {
+        const actor = getActor(req);
+        if (!ensureTokenUsageAdminOnly(actor, res)) {
+            return;
+        }
+
         const data = await tokenUsageService.getRecentTokenUsageDebug({
             limit: req.query.limit
         });
@@ -411,6 +516,7 @@ exports.getTokenUsageDebugRecent = async (req, res, next) => {
 // @access  Private (admin)
 exports.getUserSessions = async (req, res, next) => {
     try {
+        const actor = getActor(req);
         const { id } = req.params;
         const includeRevoked = String(req.query.includeRevoked || '').trim().toLowerCase() === 'true';
 
@@ -421,12 +527,16 @@ exports.getUserSessions = async (req, res, next) => {
             });
         }
 
-        const targetUser = await User.findById(id).select('_id');
+        const targetUser = await User.findById(id).select('_id role');
         if (!targetUser) {
             return res.status(404).json({
                 success: false,
                 message: 'Không tìm thấy người dùng'
             });
+        }
+
+        if (!ensureStaffCanManageTarget(actor, targetUser, res)) {
+            return;
         }
 
         const refreshToken = readRefreshTokenFromRequest(req);
@@ -452,7 +562,7 @@ exports.getUserSessions = async (req, res, next) => {
 // @access  Private (admin)
 exports.revokeUserSession = async (req, res, next) => {
     try {
-        const actor = req.actor || req.user;
+        const actor = getActor(req);
         const { id, sessionId } = req.params;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -469,12 +579,16 @@ exports.revokeUserSession = async (req, res, next) => {
             });
         }
 
-        const targetUser = await User.findById(id).select('_id');
+        const targetUser = await User.findById(id).select('_id role');
         if (!targetUser) {
             return res.status(404).json({
                 success: false,
                 message: 'Không tìm thấy người dùng'
             });
+        }
+
+        if (!ensureStaffCanManageTarget(actor, targetUser, res)) {
+            return;
         }
 
         const [sessionDoc, hasHistory] = await Promise.all([

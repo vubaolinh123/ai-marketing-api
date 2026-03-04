@@ -3,7 +3,7 @@ const router = express.Router();
 const adminController = require('../controllers/adminController');
 const { protect, authorize } = require('../middlewares');
 
-router.use(protect, authorize('admin'));
+router.use(protect, authorize('admin', 'staff'));
 
 router.get('/users', adminController.listUsers);
 router.post('/users', adminController.createUser);

@@ -164,7 +164,10 @@ const UserSchema = new mongoose.Schema({
     },
     role: {
         type: String,
-        enum: ['user', 'admin'],
+        enum: {
+            values: ['user', 'staff', 'admin'],
+            message: 'Role không hợp lệ. Chỉ chấp nhận admin, staff hoặc user.'
+        },
         default: 'user'
     },
     isActive: {
