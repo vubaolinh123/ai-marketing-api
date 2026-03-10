@@ -405,6 +405,17 @@ exports.generateAndSaveArticle = async (req, res) => {
             });
         }
 
+        // Defensive sanitization: ensure hashtags don't contain '#' and content/title don't have inline hashtags
+        if (Array.isArray(result.hashtags)) {
+            result.hashtags = result.hashtags.map((tag) => String(tag || '').replace(/^#+/, '').trim()).filter(Boolean);
+        }
+        if (typeof result.content === 'string') {
+            result.content = result.content.replace(/ #\S+/g, '').replace(/^#\S+\s*/gm, '').trim();
+        }
+        if (typeof result.title === 'string') {
+            result.title = result.title.replace(/ #\S+/g, '').replace(/^#\S+\s*/gm, '').trim();
+        }
+
         // Update placeholder with generated content
         const article = await Article.findByIdAndUpdate(processingArticle._id, {
             title: result.title,

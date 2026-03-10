@@ -159,9 +159,12 @@ ${brandContext}
 {
     "title": "Tiêu đề bài viết với emoji",
     "content": "Nội dung bài viết đầy đủ với độ dài ${wordCount} từ",
-    "hashtags": ["#hashtag1", "#hashtag2", "#hashtag3", "#hashtag4", "#hashtag5"]
+    "hashtags": ["hashtag1", "hashtag2", "hashtag3", "hashtag4", "hashtag5"]
 }
 
+Lưu ý BẮT BUỘC:
+- Trả về hashtags KHÔNG có ký tự '#' (ví dụ: "couple", "promotion" thay vì "#couple", "#promotion").
+- KHÔNG đưa hashtag hoặc ký tự '#' vào trong phần "title" hay "content". Hashtags chỉ được phép trong mảng "hashtags".
 Chỉ trả về JSON, không có text thêm.`;
 
     return prompt;
@@ -241,6 +244,17 @@ async function generateArticleContent({
         
         const parsed = parseJsonResponse(text);
         if (parsed) {
+            // Defensive: strip leading '#' from hashtags if model still includes them
+            if (Array.isArray(parsed.hashtags)) {
+                parsed.hashtags = parsed.hashtags.map((tag) => String(tag || '').replace(/^#+/, '').trim()).filter(Boolean);
+            }
+            // Defensive: strip inline #hashtag tokens from content/title that AI may have injected
+            if (typeof parsed.content === 'string') {
+                parsed.content = parsed.content.replace(/ #\S+/g, '').replace(/^#\S+\s*/gm, '').trim();
+            }
+            if (typeof parsed.title === 'string') {
+                parsed.title = parsed.title.replace(/ #\S+/g, '').replace(/^#\S+\s*/gm, '').trim();
+            }
             return parsed;
         }
         

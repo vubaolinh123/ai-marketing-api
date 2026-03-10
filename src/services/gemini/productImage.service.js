@@ -209,6 +209,20 @@ function buildIntentSignals({
         || (wantsAction && actionType !== 'none')
     );
 
+    // Detect if user explicitly wants to preserve the original scene composition/angle
+    const wantsPreserveOriginalComposition = matchAnyKeyword(normalizedText, [
+        // English
+        'preserve original', 'keep original', 'same scene', 'same angle', 'same background',
+        'same framing', 'same composition', 'keep background', 'keep scene', 'do not change background',
+        'dont change background', 'no background change', 'keep camera', 'same camera',
+        // Vietnamese
+        'giu nguyen', 'giu goc may', 'giu khong gian', 'goc may goc', 'toan bo khong gian',
+        'khong gian nay', 'goc may nay', 'khong thay doi nen', 'khong doi nen', 'giu nguyen nen',
+        'giu nguyen toan bo', 'nguyen ban', 'khong gian goc', 'giu nguyen khong gian',
+        'giu nguyen goc may', 'toan bo nen', 'nen goc', 'zoom xa', 'goc rong', 'toan canh',
+        'giu nguyen boi canh', 'giu boi canh', 'khong thay doi boi canh', 'khong thay doi goc'
+    ]);
+
     const isStylizedExplicit = matchAnyKeyword(userIntentText, [
         'anime', 'cartoon', 'chibi', 'illustration', '2d', 'lofi', 'manga', 'comic'
     ]);
@@ -240,7 +254,8 @@ function buildIntentSignals({
         wantsServingAction,
         wantsUseAction,
         wantsHumanInteraction: wantsHumanPresence,
-        isPhotorealPriority
+        isPhotorealPriority,
+        wantsPreserveOriginalComposition
     };
 }
 
@@ -317,7 +332,8 @@ function buildDeterministicHardNegativeRules(intentSignals = {}, displayInfo = '
         wantsHumanPresence,
         wantsAction,
         actionType,
-        isPhotorealPriority
+        isPhotorealPriority,
+        wantsPreserveOriginalComposition
     } = intentSignals;
 
     const hasDisplayText = typeof displayInfo === 'string' && displayInfo.trim().length > 0;
@@ -332,6 +348,11 @@ function buildDeterministicHardNegativeRules(intentSignals = {}, displayInfo = '
 
     if (isPhotorealPriority) {
         rules.push('Do not apply stylized filters, surreal grading, or non-photoreal rendering.');
+    }
+
+    if (wantsPreserveOriginalComposition) {
+        rules.push('Do not zoom in, do not crop, do not reframe, and do not change the camera distance or angle. Preserve the original scene composition and field-of-view EXACTLY as in the reference image. Only add the requested subjects (people/objects) into the existing scene without altering framing.');
+        rules.push('Do not replace or significantly alter the background, environment, or spatial context of the original reference image.');
     }
 
     if (!wantsOutdoor) {
@@ -401,11 +422,15 @@ function buildUserSceneIntentBlock(intentSignals = {}) {
         wantsHumanPresence,
         wantsAction,
         actionType,
-        requestedSceneSummary
+        requestedSceneSummary,
+        wantsPreserveOriginalComposition
     } = intentSignals;
 
     const lines = [
         requestedSceneSummary ? `Requested scene summary: ${requestedSceneSummary}` : 'Requested scene summary: follow user context for this generation.',
+        wantsPreserveOriginalComposition
+            ? '⚠️ PRESERVE ORIGINAL COMPOSITION (HIGHEST PRIORITY): User has explicitly requested to KEEP the original scene, camera angle, background, and spatial layout UNCHANGED. Do NOT reframe, crop, zoom in, or change the background environment. Only add requested subjects naturally within the existing scene.'
+            : null,
         wantsOutdoor
             ? 'Outdoor intent: REQUIRED. Build believable outdoor depth and natural light.'
             : 'Outdoor intent: NOT requested. Keep non-outdoor context unless explicitly requested.',
@@ -415,7 +440,9 @@ function buildUserSceneIntentBlock(intentSignals = {}) {
         wantsAction
             ? `Action intent: REQUESTED (${actionType || 'use'}). Keep action natural and subordinate to product identity.`
             : 'Action intent: NOT requested. Keep scene static and product-focused.',
-        'Conflict rule: do not preserve original reference background when it conflicts with this USER SCENE INTENT.'
+        wantsPreserveOriginalComposition
+            ? 'Conflict rule: PRESERVE original reference background and composition as explicitly requested by user. This OVERRIDES any default background-change behavior.'
+            : 'Conflict rule: do not preserve original reference background when it conflicts with this USER SCENE INTENT.'
     ].filter(Boolean);
 
     return lines.map((line) => `- ${line}`).join('\n');
@@ -456,7 +483,9 @@ async function buildConsistentSceneBlueprint(params) {
     } = params;
     const backgroundDesc = BACKGROUND_DESCRIPTIONS[backgroundType] || BACKGROUND_DESCRIPTIONS.studio;
     const sceneParts = [
-        `Create one consistent ${backgroundType || 'studio'} product scene (${backgroundDesc}).`,
+        intentSignals.wantsPreserveOriginalComposition
+            ? `⚠️ PRESERVE ORIGINAL SCENE (USER REQUEST): Maintain the exact original ${backgroundType || 'existing'} scene from the reference image. Do NOT change the background, environment, spatial layout, camera distance, or framing.`
+            : `Create one consistent ${backgroundType || 'studio'} product scene (${backgroundDesc}).`,
         productAnalysis?.summary ? `Preserve product appearance cues from analysis: ${productAnalysis.summary}.` : null,
         customBackground ? `Primary custom scene direction: ${customBackground}.` : null,
         usagePurpose ? `Usage purpose cue: ${usagePurpose}.` : null,
@@ -538,7 +567,11 @@ function buildConsistentAnglePrompt(params) {
         : 'You are generating a non-anchor angle. Match canonical and original references as closely as possible while changing only viewpoint.';
 
     const negativeRules = (sceneBlueprint.hardNegativeRules || []).map((rule, index) => `${index + 1}. ${rule}`).join('\n');
-    const intentSummary = `outdoor=${intentSignals?.wantsOutdoor ? 'yes' : 'no'}, human=${intentSignals?.wantsHumanPresence ? 'yes' : 'no'}, action=${intentSignals?.wantsAction ? (intentSignals?.actionType || 'yes') : 'no'}`;
+    const intentSummary = `outdoor=${intentSignals?.wantsOutdoor ? 'yes' : 'no'}, human=${intentSignals?.wantsHumanPresence ? 'yes' : 'no'}, action=${intentSignals?.wantsAction ? (intentSignals?.actionType || 'yes') : 'no'}, preserveComposition=${intentSignals?.wantsPreserveOriginalComposition ? 'YES' : 'no'}`;
+
+    const referenceUsagePolicy = intentSignals?.wantsPreserveOriginalComposition
+        ? '- ORIGINAL reference background and composition MUST be preserved — user explicitly requested it. Do not alter the scene environment, framing, or camera angle.'
+        : '- Do NOT preserve original reference background when it conflicts with USER SCENE INTENT.';
 
     const textRequirementLine = hasDisplayText
         ? '- Text rendering: ONLY the exact DISPLAY TEXT POLICY text is allowed. No extra words.'
@@ -566,7 +599,7 @@ ${attachedReferences}
 Reference usage policy:
 - ORIGINAL and CANONICAL references are identity lock sources for product shape/material/colors/labels.
 - PREVIOUS ANGLE reference is continuity support only.
-- Do NOT preserve original reference background when it conflicts with USER SCENE INTENT.
+${referenceUsagePolicy}
 
 ### ROLE
 ${anchorInstruction}
@@ -581,7 +614,7 @@ ${identityAnchor}
 
 ### ANGLE DELTA (ONLY THIS MAY CHANGE)
 - Target camera angle: ${cameraAngle}
-- Framing guidance: ${angleDescription}
+- Framing guidance: ${intentSignals?.wantsPreserveOriginalComposition ? `KEEP ORIGINAL FRAMING — do not zoom in, do not crop; maintain the same field-of-view and composition as the reference. Original angle hint: ${angleDescription}` : angleDescription}
 
 ### USER SCENE INTENT (HIGH PRIORITY)
 ${userSceneIntentBlock || '- Follow user scene request while preserving product identity lock.'}
