@@ -149,6 +149,11 @@ const ProductImageSchema = new mongoose.Schema({
         trim: true,
         default: ''
     },
+    regenerateInstruction: {
+        type: String,
+        trim: true,
+        default: ''
+    },
     
     // Whether brand settings were used
     usedBrandSettings: {

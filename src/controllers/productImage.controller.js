@@ -108,6 +108,11 @@ function mapStatusFromGeneratedImages(generatedImages) {
     return 'completed';
 }
 
+function normalizeRegenerateInstruction(value) {
+    if (typeof value !== 'string') return '';
+    return value.trim();
+}
+
 /**
  * Generate product image with AI
  * POST /api/product-images/generate
@@ -355,13 +360,16 @@ exports.generateProductImage = async (req, res) => {
 exports.regenerateProductImage = async (req, res) => {
     try {
         const { id } = req.params;
+        const regenerateInstruction = normalizeRegenerateInstruction(req.body?.regenerateInstruction);
 
         logPromptDebug({
             tool: 'image',
             step: 'received-input',
             data: {
                 operation: 'regenerateProductImage',
-                id
+                id,
+                hasRegenerateInstruction: !!regenerateInstruction,
+                regenerateInstruction
             }
         });
 
@@ -427,6 +435,11 @@ exports.regenerateProductImage = async (req, res) => {
             });
         }
 
+        const combinedAdditionalNotes = [
+            originalImage.additionalNotes,
+            regenerateInstruction ? `Yêu cầu điều chỉnh khi tạo lại ảnh:\n${regenerateInstruction}` : ''
+        ].filter(Boolean).join('\n\n');
+
         const originalImagePath = geminiService.productImageService.getFilePathFromUrl(normalizedOriginalImageUrl);
 
         const normalizedDisplayInfo = normalizeDisplayInfo(originalImage.displayInfo);
@@ -488,7 +501,7 @@ exports.regenerateProductImage = async (req, res) => {
                 logoPosition: originalImage.logoPosition,
                 logoUrl,
                 outputSize: originalImage.outputSize,
-                additionalNotes: originalImage.additionalNotes,
+                additionalNotes: combinedAdditionalNotes,
                 brandContext,
                 modelName: imageGenModel
             });
@@ -508,6 +521,7 @@ exports.regenerateProductImage = async (req, res) => {
             // Update record with new result
             originalImage.generatedImages = generatedImages;
             originalImage.generatedImageUrl = generatedImages.find(item => item.status === 'completed' && item.imageUrl)?.imageUrl || '';
+            originalImage.regenerateInstruction = regenerateInstruction;
             originalImage.status = mapStatusFromGeneratedImages(generatedImages);
             const firstError = generatedImages.find(item => item.status === 'failed' && item.errorMessage)?.errorMessage;
             originalImage.errorMessage = firstError || '';
