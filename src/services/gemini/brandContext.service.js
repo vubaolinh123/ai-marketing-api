@@ -130,8 +130,32 @@ function hasBrandData(aiSettings) {
 }
 
 /**
+ * Extract brand name, customer term, and brand pronoun from brand context string
+ * @param {string} brandContext - Brand context string
+ * @returns {{ brandName: string|null, customerTerm: string|null, brandPronoun: string|null }}
+ */
+function extractBrandIdentifiers(brandContext) {
+    if (!brandContext) return { brandName: null, customerTerm: null, brandPronoun: null };
+
+    const brandNameMatch = brandContext.match(/\*\*Tên thương hiệu:\*\*\s*(.+?)(?:\n|$)/);
+    const customerTermMatch = brandContext.match(/\*\*Cách xưng hô khách hàng:\*\*\s*(.+?)(?:\n|$)/)
+        || brandContext.match(/Customer term[^:]*:\s*(.+?)(?:\n|$)/i);
+    const brandPronounMatch = brandContext.match(/\*\*Cách xưng hô thương hiệu:\*\*\s*(.+?)(?:\n|$)/)
+        || brandContext.match(/Brand pronoun[^:]*:\s*(.+?)(?:\n|$)/i);
+
+    return {
+        brandName: brandNameMatch?.[1]?.trim() || null,
+        customerTerm: customerTermMatch?.[1]?.trim() || null,
+        brandPronoun: brandPronounMatch?.[1]?.trim() || null
+    };
+}
+
+/**
  * Inject brand context into any prompt
  * This is a reusable helper for all AI generation services.
+ * 
+ * Brand enforcement is placed BEFORE the base prompt so AI models
+ * treat it as highest-priority instruction.
  * 
  * @param {string} basePrompt - The original prompt
  * @param {string|null} brandContext - Brand context string from buildBrandContext()
@@ -144,7 +168,28 @@ function hasBrandData(aiSettings) {
  */
 function injectBrandContextToPrompt(basePrompt, brandContext) {
     if (!brandContext) return basePrompt;
-    
+
+    const { brandName, customerTerm, brandPronoun } = extractBrandIdentifiers(brandContext);
+
+    // Build strict identity lock that goes BEFORE the base prompt
+    const identityLines = [];
+    if (brandName) {
+        identityLines.push(`- Tên thương hiệu là "${brandName}". TUYỆT ĐỐI chỉ dùng tên này, KHÔNG được dùng tên khác, KHÔNG bịa tên, KHÔNG dùng placeholder như [Tên thương hiệu], [Tên Nhà Hàng].`);
+    }
+    if (brandPronoun) {
+        identityLines.push(`- Xưng hô thương hiệu: "${brandPronoun}". TUYỆT ĐỐI chỉ dùng cách xưng hô này khi nhắc đến thương hiệu, KHÔNG dùng "chúng tôi", "chúng ta", "nhà hàng", "cửa hàng" hay bất kỳ cách xưng hô nào khác.`);
+    }
+    if (customerTerm) {
+        identityLines.push(`- Xưng hô khách hàng: "${customerTerm}". TUYỆT ĐỐI chỉ dùng cách xưng hô này khi nhắc đến khách hàng, KHÔNG dùng "bạn", "quý khách", "anh/chị" hay bất kỳ cách xưng hô nào khác.`);
+    }
+
+    const identityLock = identityLines.length > 0
+        ? `## QUY TẮC DANH TÍNH THƯƠNG HIỆU (ĐỘ ƯU TIÊN CAO NHẤT - KHÔNG ĐƯỢC VI PHẠM)
+${identityLines.join('\n')}
+
+`
+        : '';
+
     const brandSection = `
 
 ## THÔNG TIN THƯƠNG HIỆU (Bắt buộc tuân thủ)
@@ -152,20 +197,24 @@ ${brandContext}
 
 ### Hướng dẫn sử dụng thông tin thương hiệu:
 - Sử dụng CHÍNH XÁC tên thương hiệu đã cung cấp, KHÔNG dùng placeholder như [Tên thương hiệu] hoặc [Tên Nhà Hàng]
-- Áp dụng tone giọng điệu đã định nghĩa xuyên suốt bài viết
-- Xưng hô khách hàng theo customerTerm và xưng hô thương hiệu theo brandPronoun nếu có
+- Áp dụng tone giọng điệu đã định nghĩa xuyên suốt nội dung
+- Xưng hô khách hàng theo customerTerm và xưng hô thương hiệu theo brandPronoun — NHẤT QUÁN từ đầu đến cuối
 - Lồng ghép từ khóa thương hiệu một cách tự nhiên vào nội dung
 - Tận dụng productGroups và strengths để làm rõ lợi thế sản phẩm/dịch vụ
 - Ưu tiên contextDescriptions theo từng ngữ cảnh thể hiện thông điệp
 - Nếu có resource insights, dùng làm nguồn tham chiếu thị giác/ngôn ngữ nhất quán
-- KHÔNG bịa thêm thông tin không có trong dữ liệu thương hiệu`;
+- KHÔNG bịa thêm thông tin không có trong dữ liệu thương hiệu
+- KHÔNG sử dụng ngoặc kép thừa. Chỉ dùng ngoặc kép khi trích dẫn trực tiếp lời nói hoặc thuật ngữ chuyên môn thực sự cần thiết.`;
 
-    return basePrompt + brandSection;
+    // Identity lock goes BEFORE base prompt (highest priority)
+    // Brand details go AFTER base prompt (contextual reference)
+    return identityLock + basePrompt + brandSection;
 }
 
 module.exports = {
     buildBrandContext,
     buildRichBrandContext,
     hasBrandData,
-    injectBrandContextToPrompt
+    injectBrandContextToPrompt,
+    extractBrandIdentifiers
 };

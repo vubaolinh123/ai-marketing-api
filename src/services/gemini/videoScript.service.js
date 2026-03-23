@@ -137,6 +137,11 @@ function buildVideoScriptBasePrompt(input) {
 
     return `Bạn là chuyên gia viết kịch bản video marketing chuyên nghiệp. Hãy tạo một kịch bản video hoàn chỉnh.
 
+## QUY TẮC NGÔN NGỮ TIẾNG VIỆT (BẮT BUỘC)
+- KHÔNG viết hoa đại từ nhân xưng hoặc danh từ chung giữa câu. Ví dụ: viết "bạn" KHÔNG PHẢI "Bạn", viết "chúng tôi" KHÔNG PHẢI "Chúng tôi".
+- Chỉ viết hoa: đầu câu, tên riêng (tên thương hiệu, tên người, tên địa danh), và viết tắt.
+- Hạn chế sử dụng ngoặc kép (" "). Chỉ dùng khi trích dẫn trực tiếp lời nói hoặc thuật ngữ chuyên môn thực sự cần thiết. KHÔNG lạm dụng ngoặc kép cho danh từ thông thường.
+
 ## THÔNG TIN VIDEO
 - **Tiêu đề/Chủ đề:** ${input.title}
 - **Thời lượng dự kiến:** ${input.duration}
@@ -156,7 +161,8 @@ ${input.otherRequirements ? `- **Yêu cầu khác:** ${input.otherRequirements}`
 2. Mỗi cảnh cần có: địa điểm, loại góc quay, mô tả hành động, voice over (nếu có), nguồn (quay mới/dựng), ghi chú
 3. Loại góc quay chỉ được chọn từ: goc_trung, can_canh, goc_rong, overlay
 4. Kịch bản phải có hook mạnh ở cảnh đầu và CTA rõ ở cuối
-5. Kịch bản phải bám sát mục tiêu video, đúng đối tượng khán giả và làm nổi bật sản phẩm/dịch vụ chính`;
+5. Kịch bản phải bám sát mục tiêu video, đúng đối tượng khán giả và làm nổi bật sản phẩm/dịch vụ chính
+6. Nếu có thông tin thương hiệu (brand context): BẮT BUỘC sử dụng ĐÚNG tên thương hiệu, ĐÚNG cách xưng hô thương hiệu (brandPronoun) và ĐÚNG cách xưng hô khách hàng (customerTerm) — KHÔNG bịa tên khác, KHÔNG dùng "chúng tôi" hay cách xưng hô nào khác ngoài những gì đã cấu hình`;
 }
 
 function buildVideoScriptJsonInstruction(sceneCount) {
@@ -211,6 +217,11 @@ function normalizeGeneratedScript(parsed, expectedSceneCount) {
 function buildIdeaBasePrompt({ title, duration, sceneCount, videoGoal, targetAudience, featuredProductService, selectedConceptTitle }) {
     return `Bạn là chuyên gia sáng tạo content video marketing hàng đầu. Nhiệm vụ của bạn là tạo một ý tưởng kịch bản video ĐỘC ĐÁO và CHI TIẾT.
 
+## QUY TẮC NGÔN NGỮ TIẾNG VIỆT (BẮT BUỘC)
+- KHÔNG viết hoa đại từ nhân xưng hoặc danh từ chung giữa câu. Ví dụ: viết "bạn" KHÔNG PHẢI "Bạn", viết "chúng tôi" KHÔNG PHẢI "Chúng tôi".
+- Chỉ viết hoa: đầu câu, tên riêng (tên thương hiệu, tên người, tên địa danh), và viết tắt.
+- Hạn chế sử dụng ngoặc kép thừa. Chỉ dùng khi trích dẫn trực tiếp hoặc thuật ngữ chuyên môn thực sự cần thiết.
+
 ## THÔNG TIN CHIẾN DỊCH
 - **Chủ đề chính:** ${title}
 - **Thời lượng dự kiến:** ${duration || 'không xác định'}
@@ -224,7 +235,8 @@ ${selectedConceptTitle ? `- **Concept đã chọn:** ${selectedConceptTitle}` : 
 1. Nếu thời lượng > 1 phút hoặc số cảnh > 10, nội dung gợi ý phải cực kỳ chi tiết, phân chia rõ các giai đoạn.
 2. Mỗi cảnh phải đóng góp vào storyline hoàn chỉnh, mô tả rõ hình ảnh và lời thoại.
 3. Hook 3-5 giây đầu phải thật sự gây chú ý.
-4. CTA phải tinh tế nhưng quyết liệt, gắn với mục tiêu thương hiệu.`;
+4. CTA phải tinh tế nhưng quyết liệt, gắn với mục tiêu thương hiệu.
+5. Nếu có thông tin thương hiệu: BẮT BUỘC dùng ĐÚNG tên thương hiệu, ĐÚNG cách xưng hô (brandPronoun/customerTerm) — KHÔNG bịa tên khác.`;
 }
 
 function buildIdeaJsonInstruction(duration, sceneCount) {
@@ -252,6 +264,11 @@ function buildConceptSuggestionPrompt({
     conceptCount
 }) {
     return `Bạn là Creative Director chuyên lên concept video marketing chuyển đổi cao.
+
+## QUY TẮC NGÔN NGỮ TIẾNG VIỆT (BẮT BUỘC)
+- KHÔNG viết hoa đại từ nhân xưng hoặc danh từ chung giữa câu.
+- Hạn chế sử dụng ngoặc kép thừa.
+- Nếu có thông tin thương hiệu: BẮT BUỘC dùng ĐÚNG tên thương hiệu và cách xưng hô đã cấu hình.
 
 ## INPUT
 - Chủ đề video: ${title}
@@ -284,6 +301,7 @@ function buildConceptSuggestionPrompt({
 QUY TẮC:
 - concepts phải có đúng ${conceptCount} phần tử.
 - Ngắn gọn, cụ thể, không chung chung.
+- Nếu có thông tin thương hiệu: BẮT BUỘC dùng ĐÚNG tên thương hiệu và cách xưng hô đã cấu hình, KHÔNG bịa tên khác.
 - Chỉ trả về JSON hợp lệ.`;
 }
 

@@ -48,8 +48,15 @@ async function generateImage(prompt, options = {}) {
             }
         });
         
-        // Enhanced prompt for better image generation
-        const enhancedPrompt = `Create a high-quality, professional marketing image: ${prompt}. The image should be visually appealing, suitable for social media marketing, with vibrant colors and clean composition.`;
+        // Enhanced prompt for better image generation with strict no-logo/no-text rules
+        const enhancedPrompt = `Create a high-quality, professional marketing image: ${prompt}.
+
+STRICT IMAGE RULES (MUST FOLLOW):
+- The image should be visually appealing, suitable for social media marketing, with vibrant colors and clean composition.
+- ABSOLUTELY DO NOT generate any logo, brand mark, watermark, or brand emblem anywhere in the image. The user will add their own logo after the image is created.
+- ABSOLUTELY DO NOT render any text, typography, letters, words, or numbers on the image. Keep the image purely visual without any readable characters.
+- DO NOT add any overlaid graphics, badges, stamps, ribbons, or decorative text elements.
+- Focus on high-quality photorealistic imagery only — no text overlays, no logo placeholders, no brand elements.`;
 
         logPromptDebug({
             tool: 'article',
@@ -205,12 +212,15 @@ ${baseContent}
     "title": "Tiêu đề bài viết",
     "content": "Nội dung bài viết đầy đủ với độ dài ${wordCount} từ",
     "hashtags": ["hashtag1", "hashtag2", "hashtag3", "hashtag4", "hashtag5"],
-    "imagePrompt": "Detailed English description for AI image generation: describe the scene, style (photorealistic/illustrated/3D), colors, composition, lighting, mood. Example: A professional product photo of a sleek smartphone on a marble surface, soft studio lighting, minimalist style, white background with subtle shadows."
+    "imagePrompt": "Detailed English description for AI image generation: describe the scene, style (photorealistic/illustrated/3D), colors, composition, lighting, mood. CRITICAL: DO NOT include any logo, brand mark, watermark, text, typography, letters, words, or numbers in the image description. The image must be purely visual — the user will add their own logo afterward. Example: A professional product photo of a sleek smartphone on a marble surface, soft studio lighting, minimalist style, white background with subtle shadows."
 }
 
 Lưu ý BẮT BUỘC:
 - Trả về hashtags KHÔNG có ký tự '#' (ví dụ: "couple", "promotion" thay vì "#couple", "#promotion").
 - KHÔNG đưa hashtag hoặc ký tự '#' vào trong phần "title" hay "content". Hashtags chỉ được phép trong mảng "hashtags".
+- Trong imagePrompt: TUYỆT ĐỐI KHÔNG mô tả logo, brand mark, watermark, hoặc bất kỳ text/chữ/số nào. Ảnh phải thuần hình ảnh, người dùng sẽ tự thêm logo sau.
+- KHÔNG viết hoa đại từ nhân xưng hoặc danh từ chung giữa câu trong tiếng Việt. Ví dụ: viết "bạn" thay vì "Bạn", viết "chúng tôi" thay vì "Chúng tôi", viết "chúng tớ" thay vì "Chúng tớ".
+- Hạn chế sử dụng ngoặc kép (" "). Chỉ dùng khi trích dẫn trực tiếp lời nói hoặc thuật ngữ chuyên môn thực sự cần thiết.
 Chỉ trả về JSON, không có text thêm.`;
 
     logPromptDebug({

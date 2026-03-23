@@ -50,6 +50,10 @@ function buildMarketingPlanPrompt(input) {
 
     return composePromptBlocks([
         'Bạn là chuyên gia Marketing với 10+ năm kinh nghiệm lên kế hoạch content cho social media.',
+        `## QUY TẮC NGÔN NGỮ TIẾNG VIỆT (BẮT BUỘC)
+- KHÔNG viết hoa đại từ nhân xưng hoặc danh từ chung giữa câu. Ví dụ: viết "bạn" KHÔNG PHẢI "Bạn", viết "chúng tôi" KHÔNG PHẢI "Chúng tôi".
+- Chỉ viết hoa: đầu câu, tên riêng (tên thương hiệu, tên người, tên địa danh), và viết tắt.
+- Hạn chế sử dụng ngoặc kép (" "). Chỉ dùng khi trích dẫn trực tiếp hoặc thuật ngữ chuyên môn thực sự cần thiết.`,
         `## THÔNG TIN CHIẾN DỊCH
 - **Tên chiến dịch:** ${input.campaignName}
 - **Thời gian:** từ ${input.startDate} đến ${input.endDate}
@@ -74,7 +78,7 @@ Tạo content calendar chi tiết với từng bài đăng. Mỗi bài cần có
 3. Ý tưởng nội dung phải CỤ THỂ, SÁNG TẠO, có thể thực hiện được ngay
 4. Mỗi bài có mục đích rõ ràng (engagement, sales, awareness, traffic, leads)
 5. Hashtags liên quan đến chủ đề, xu hướng và ngành
-6. Nếu có brand setup: bắt buộc áp dụng customerTerm + brandPronoun, phản ánh product strengths/product groups, tone/contextDescriptions, và resource insights khi lên ý tưởng nội dung
+6. Nếu có brand setup: BẮT BUỘC sử dụng ĐÚNG tên thương hiệu, ĐÚNG cách xưng hô thương hiệu (brandPronoun) và ĐÚNG cách xưng hô khách hàng (customerTerm) — KHÔNG bịa tên khác, KHÔNG dùng cách xưng hô nào khác ngoài những gì đã cấu hình. Phản ánh product strengths/product groups, tone/contextDescriptions, và resource insights khi lên ý tưởng nội dung
 
 ## OUTPUT FORMAT
 Trả về CHÍNH XÁC một JSON array (không có markdown, không có giải thích):
@@ -106,6 +110,10 @@ function buildMonthlyStrategyPrompt(input) {
 
     return composePromptBlocks([
         'Bạn là chiến lược gia marketing tăng trưởng theo tháng.',
+        `## QUY TẮC NGÔN NGỮ TIẾNG VIỆT (BẮT BUỘC)
+- KHÔNG viết hoa đại từ nhân xưng hoặc danh từ chung giữa câu.
+- Hạn chế sử dụng ngoặc kép thừa.
+- Nếu có thông tin thương hiệu: BẮT BUỘC dùng ĐÚNG tên thương hiệu và cách xưng hô đã cấu hình, KHÔNG bịa tên khác.`,
         `## INPUT
 - Tên chiến dịch: ${input.campaignName || '(chưa có)'}
 - Khoảng thời gian: ${input.startDate || '(chưa có)'} đến ${input.endDate || '(chưa có)'}

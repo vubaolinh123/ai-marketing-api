@@ -124,7 +124,12 @@ async function generateArticleWithImage({
 3. Nội dung tự nhiên, mô tả được hình ảnh một cách sáng tạo
 4. Có call-to-action rõ ràng
 5. Độ dài ĐÚNG ${wordCount} từ (bắt buộc, rất quan trọng!)
-6. Nếu có brandPronoun/customerTerm trong brand context thì phải tuân thủ nhất quán cách xưng hô`;
+6. Nếu có brandPronoun/customerTerm trong brand context thì phải tuân thủ nhất quán cách xưng hô từ đầu đến cuối
+
+**QUY TẮC NGÔN NGỮ TIẾNG VIỆT (BẮT BUỘC):**
+- KHÔNG viết hoa đại từ nhân xưng hoặc danh từ chung giữa câu. Ví dụ: viết "bạn" KHÔNG PHẢI "Bạn", viết "chúng tôi" KHÔNG PHẢI "Chúng tôi", viết "chúng tớ" KHÔNG PHẢI "Chúng tớ".
+- Chỉ viết hoa: đầu câu, tên riêng (tên thương hiệu, tên người, tên địa danh), và viết tắt.
+- Hạn chế sử dụng ngoặc kép (" "). Chỉ dùng khi trích dẫn trực tiếp hoặc thuật ngữ chuyên môn thực sự cần thiết.`;
 
     if (baseContent) {
         basePrompt += `
@@ -157,6 +162,8 @@ ${baseContent}
 Lưu ý BẮT BUỘC:
 - Trả về hashtags KHÔNG có ký tự '#' (ví dụ: "couple", "promotion" thay vì "#couple", "#promotion").
 - KHÔNG đưa hashtag hoặc ký tự '#' vào trong phần "title" hay "content". Hashtags chỉ được phép trong mảng "hashtags".
+- KHÔNG viết hoa đại từ nhân xưng hoặc danh từ chung giữa câu trong tiếng Việt.
+- Hạn chế sử dụng ngoặc kép thừa.
 Chỉ trả về JSON, không có text thêm.`;
 
     logPromptDebug({

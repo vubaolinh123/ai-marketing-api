@@ -139,10 +139,11 @@ ${brandContext}
 ### Hướng dẫn sử dụng thông tin thương hiệu:
 - Sử dụng tên thương hiệu và từ khóa một cách TỰ NHIÊN trong nội dung
 - Áp dụng tone giọng điệu đã định nghĩa xuyên suốt bài viết
-- Xưng hô khách hàng theo customerTerm và xưng hô thương hiệu theo brandPronoun nếu có
+- Xưng hô khách hàng theo customerTerm và xưng hô thương hiệu theo brandPronoun — NHẤT QUÁN từ đầu đến cuối, KHÔNG trộn lẫn cách xưng hô khác
 - Nhấn mạnh điểm mạnh sản phẩm/dịch vụ, nhóm sản phẩm trọng tâm và bối cảnh diễn đạt phù hợp
 - Nếu có resource insights, tận dụng làm chất liệu ngôn ngữ và hình ảnh mô tả nhất quán
-- KHÔNG làm bài viết trở nên gượng ép hay quảng cáo quá lộ liễu`;
+- KHÔNG làm bài viết trở nên gượng ép hay quảng cáo quá lộ liễu
+- KHÔNG bịa tên thương hiệu, tên sản phẩm, hoặc cách xưng hô ngoài những gì đã cung cấp`;
     }
 
     prompt += `
@@ -154,6 +155,11 @@ ${brandContext}
 4. Độ dài CHÍNH XÁC ${wordCount} từ
 5. Phong cách phù hợp với chủ đề và mục đích đã chọn
 6. Hashtags liên quan và hấp dẫn
+
+## QUY TẮC NGÔN NGỮ TIẾNG VIỆT (BẮT BUỘC)
+- KHÔNG viết hoa đại từ nhân xưng hoặc danh từ chung giữa câu. Ví dụ: viết "bạn" KHÔNG PHẢI "Bạn", viết "chúng tôi" KHÔNG PHẢI "Chúng tôi", viết "chúng tớ" KHÔNG PHẢI "Chúng tớ", viết "mình" KHÔNG PHẢI "Mình".
+- Chỉ viết hoa: đầu câu, tên riêng (tên thương hiệu, tên người, tên địa danh), và viết tắt.
+- Hạn chế sử dụng ngoặc kép (" "). Chỉ dùng khi trích dẫn trực tiếp lời nói hoặc thuật ngữ chuyên môn thực sự cần thiết. KHÔNG lạm dụng ngoặc kép cho danh từ thông thường.
  
 ## FORMAT JSON TRẢ VỀ
 {
