@@ -59,6 +59,17 @@ const ProductImageSchema = new mongoose.Schema({
         type: [String],
         default: []
     },
+    referenceImageRoles: {
+        type: [{
+            url: { type: String, required: true },
+            role: { 
+                type: String, 
+                enum: ['scene', 'product', 'prop', 'person', 'unknown'],
+                default: 'unknown'
+            }
+        }],
+        default: []
+    },
     
     // AI-generated result image
     generatedImageUrl: {

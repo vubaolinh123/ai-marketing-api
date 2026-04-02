@@ -755,27 +755,180 @@ ${sanitizedBrandContext || '(none)'}`,
 }
 
 /**
- * Analyze multiple product reference images and build a consolidated identity profile.
- * Uses a two-phase approach:
- *   Phase 1: Analyze each image individually to capture angle-specific details
- *   Phase 2: Cross-reference all analyses to produce a high-confidence consensus profile
- *
- * @param {string[]} imagePaths - Array of file paths to product images (max 5)
- * @returns {Promise<Object>} Consolidated product analysis with confidence scoring
+ * Build prompt for scene composition mode (multiple different images → one composed output).
+ * @param {Object} params
+ * @returns {string} Assembled prompt string
  */
-async function analyzeMultipleProductImages(imagePaths) {
+function buildSceneCompositionPrompt(params) {
+    const {
+        sceneElements,
+        cameraAngle,
+        outputSize,
+        additionalNotes,
+        intentSignals,
+        userSceneIntentBlock,
+        displayTextPolicyBlock,
+        hasDisplayText = false,
+        sanitizedBrandContext,
+        creativeBlock,
+        photorealGuardrails,
+        retryLevel
+    } = params;
+
+    const sizeInfo = OUTPUT_SIZES[outputSize] || OUTPUT_SIZES['1:1'];
+    const angleDescription = CAMERA_ANGLE_PROMPTS[cameraAngle] || CAMERA_ANGLE_PROMPTS.wide;
+    const aspectRatioAdjustment = ASPECT_RATIO_ANGLE_ADJUSTMENTS[cameraAngle]?.[outputSize] || '';
+
+    // Build reference order description from scene elements
+    const elementDescriptions = (sceneElements.elements || []).map((el, i) => {
+        const roleLabel = el.role.toUpperCase();
+        const isPrimary = i === sceneElements.primarySceneIndex ? ' (PRIMARY SCENE/BACKGROUND)'
+            : i === sceneElements.primaryProductIndex ? ' (PRIMARY PRODUCT — hero subject)'
+            : '';
+        return `- Image #${i + 1}: ${roleLabel}${isPrimary}`;
+    }).join('\n');
+
+    // Extract product element analysis for identity lock
+    const productElement = sceneElements.elements?.find((_, i) => i === sceneElements.primaryProductIndex);
+    const productAnalysis = productElement?.analysis || {};
+    const sceneElement = sceneElements.elements?.find((_, i) => i === sceneElements.primarySceneIndex);
+    const sceneAnalysis = sceneElement?.analysis || {};
+
+    // Build product identity from analysis
+    const productIdentityLines = [
+        productAnalysis.productType ? `Product type: ${productAnalysis.productType}` : null,
+        productAnalysis.colors ? `Colors: ${Array.isArray(productAnalysis.colors) ? productAnalysis.colors.join(', ') : productAnalysis.colors}` : null,
+        productAnalysis.material ? `Material: ${productAnalysis.material}` : null,
+        productAnalysis.shape ? `Shape: ${productAnalysis.shape}` : null,
+        productAnalysis.features ? `Features: ${Array.isArray(productAnalysis.features) ? productAnalysis.features.join('; ') : productAnalysis.features}` : null,
+        productAnalysis.brandElements ? `Brand elements: ${productAnalysis.brandElements}` : null,
+        productAnalysis.summary ? `Summary: ${productAnalysis.summary}` : null,
+    ].filter(Boolean).join('\n');
+
+    const hardNegativeRules = [
+        'Do NOT change the product\'s colors, logos, labels, branding, shape, or materials. Copy them EXACTLY from the product reference image.',
+        'Do NOT invent text overlays, watermarks, or fictional brand names.',
+        'Do NOT distort the product to fit the scene — adjust the scene framing instead.',
+        !intentSignals?.wantsHumanPresence ? 'Do NOT add people unless explicitly requested.' : null,
+        hasDisplayText
+            ? 'Do NOT generate any readable text except the exact DISPLAY TEXT POLICY string.'
+            : 'Do NOT add any readable text to the image.',
+    ].filter(Boolean).map((rule, i) => `${i + 1}. ${rule}`).join('\n');
+
+    const intentSummary = `outdoor=${intentSignals?.wantsOutdoor ? 'yes' : 'no'}, human=${intentSignals?.wantsHumanPresence ? 'yes' : 'no'}, action=${intentSignals?.wantsAction ? (intentSignals?.actionType || 'yes') : 'no'}`;
+
+    const retryInstruction = retryLevel === 1
+        ? `\n### RETRY (attempt 2)
+- Increase fidelity to the product reference image. Copy product appearance exactly.
+- Simplify the composition slightly. Focus on accurate placement and lighting match.`
+        : retryLevel >= 2
+            ? `\n### FINAL RETRY (attempt 3) — MAXIMUM FIDELITY
+- Copy the product pixel-perfectly from the reference. Zero creative liberty on product appearance.
+- Use the simplest realistic placement in the scene.
+- Match scene lighting exactly. Prioritize realism and consistency over creativity.`
+            : '';
+
+    return composePromptBlocks([
+        `## SCENE COMPOSITION — MULTI-IMAGE SYNTHESIS
+
+### INSTRUCTION PRIORITY
+1) Safety policy
+2) Product identity preservation (IMMUTABLE)
+3) Scene lighting and perspective match
+4) Realistic compositing quality
+5) User scene intent
+6) Creative direction
+
+### GOAL
+Compose a SINGLE photorealistic image by placing the PRODUCT into the SCENE, matching lighting, perspective, scale, and shadows so the result looks like a real photograph — not a collage or overlay.
+
+### ATTACHED IMAGES (in order)
+${elementDescriptions}
+
+### COMPOSITION STRATEGY
+Use Image #${(sceneElements.primarySceneIndex ?? 0) + 1} as the BACKGROUND/ENVIRONMENT.
+Place the product from Image #${(sceneElements.primaryProductIndex ?? 0) + 1} INTO that scene.
+
+**Lighting match**: ${sceneElements.lightingBlueprint || 'Match the scene lighting direction, color temperature, and shadow quality.'}
+**Placement**: ${sceneElements.placementHints || 'Place the product naturally on the primary surface in the scene.'}
+**Composition notes**: ${sceneElements.compositionNotes || 'Ensure perspective, scale, and depth of field are consistent.'}
+
+### DETAILED COMPOSITION RULES
+1. **Perspective match**: Analyze the vanishing points and camera angle of the SCENE image. Render the product from the same viewpoint so it sits naturally in 3D space.
+2. **Scale match**: Use objects in the scene (plates, furniture, hands) as scale references. The product should be proportionally correct.
+3. **Lighting match**: Copy the scene's light direction, shadow softness, color temperature, and specular behavior onto the product. If the scene has warm 3200K candlelight from the left, the product must show warm highlights on the left and soft shadows on the right.
+4. **Contact shadow**: Create a realistic contact shadow where the product meets the surface. Match shadow density and blur from other objects in the scene.
+5. **Reflection**: If the surface is reflective (polished table, marble), add a subtle product reflection matching other reflections in the scene.
+6. **Depth of field**: Match the scene's depth of field. If the background is blurred, keep the product sharp at the same focal plane as the surface it sits on.
+7. **Color grading**: Apply the same color grade/mood from the scene image to the product rendering, while preserving the product's TRUE colors.
+8. **Occlusion**: If props or scene elements would naturally be in front of part of the product, handle occlusion realistically.
+
+### PRODUCT IDENTITY (IMMUTABLE)
+${productIdentityLines || 'Preserve the product exactly as it appears in the product reference image.'}
+
+### SCENE CONTEXT
+${sceneAnalysis.sceneDescription ? `Scene: ${sceneAnalysis.sceneDescription}` : 'Use the scene reference image as the environment.'}
+${sceneAnalysis.lighting ? `Scene lighting: ${sceneAnalysis.lighting}` : ''}
+${sceneAnalysis.suggestedProductPlacement ? `Suggested placement: ${sceneAnalysis.suggestedProductPlacement}` : ''}
+
+### TARGET CAMERA ANGLE
+- Angle: ${cameraAngle} — ${angleDescription}
+${aspectRatioAdjustment ? `- Aspect-ratio note (${outputSize}): ${aspectRatioAdjustment}` : ''}
+
+### USER SCENE INTENT
+${userSceneIntentBlock || '- Follow user scene request.'}
+- Resolved intent signals: ${intentSummary}
+
+${displayTextPolicyBlock || ''}
+
+### HARD NEGATIVE RULES
+${hardNegativeRules}
+
+### TECHNICAL REQUIREMENTS
+- Aspect ratio: ${sizeInfo.label} (${sizeInfo.width}x${sizeInfo.height})
+- Style: Photorealistic professional photography
+- The final image must look like a SINGLE photograph, not a composite or collage
+
+### USER NOTES
+${additionalNotes || '(none)'}
+${retryInstruction}
+
+### BRAND CONTEXT (LOW PRIORITY)
+${sanitizedBrandContext || '(none)'}`,
+        creativeBlock,
+        photorealGuardrails
+    ]);
+}
+
+/**
+ * Analyze multiple images as scene elements for composition.
+ * Classifies each image's role (scene, product, prop, person) and produces
+ * a unified composition blueprint.
+ *
+ * @param {string[]} imagePaths - Array of file paths (max 5)
+ * @returns {Promise<Object>} Scene elements analysis with composition blueprint
+ */
+async function analyzeSceneElements(imagePaths) {
     if (!Array.isArray(imagePaths) || imagePaths.length === 0) {
         throw new Error('At least one image path is required');
     }
 
-    // If only one image, fall back to single analysis
+    // Single image: fall back to product analysis wrapped in scene-elements format
     if (imagePaths.length === 1) {
         const analysis = await analyzeProductImage(imagePaths[0]);
         return {
-            ...analysis,
-            multiRefMode: false,
-            sourceImageCount: 1,
-            confidenceLevel: 'standard'
+            elements: [{
+                index: 0,
+                path: imagePaths[0],
+                role: 'product',
+                analysis
+            }],
+            primarySceneIndex: -1,
+            primaryProductIndex: 0,
+            lightingBlueprint: analysis.lightingStyle || 'Match the lighting from the product reference image.',
+            placementHints: 'Place the product as the hero subject in the generated scene.',
+            compositionNotes: 'Single product image — standard product-in-scene generation.',
+            singleImageMode: true
         };
     }
 
@@ -784,131 +937,125 @@ async function analyzeMultipleProductImages(imagePaths) {
         throw new Error('No valid image files found');
     }
 
-    // Phase 1: Analyze each image individually in parallel
-    const individualAnalyses = await Promise.all(
-        validPaths.map(async (imgPath, index) => {
-            try {
-                const analysis = await analyzeProductImage(imgPath);
-                return { index, path: imgPath, analysis, success: true };
-            } catch (error) {
-                logError('Multi-ref individual analysis error', {
-                    service: 'product-image',
-                    imageIndex: index,
-                    imagePath: imgPath,
-                    error
-                });
-                return { index, path: imgPath, analysis: null, success: false };
-            }
-        })
-    );
-
-    const successfulAnalyses = individualAnalyses.filter(a => a.success && a.analysis);
-    if (successfulAnalyses.length === 0) {
-        throw new Error('Failed to analyze any reference images');
-    }
-
-    // Phase 2: Cross-reference synthesis using Gemini Vision with ALL images
     const model = getModel('VISION');
-    const imageParts = validPaths.map(imgPath => {
-        const buffer = fs.readFileSync(imgPath);
-        return {
-            inlineData: {
-                mimeType: getMimeTypeFromPath(imgPath),
-                data: buffer.toString('base64')
-            }
-        };
-    });
+    const imageParts = validPaths.map(imgPath => ({
+        inlineData: {
+            mimeType: getMimeTypeFromPath(imgPath),
+            data: fs.readFileSync(imgPath).toString('base64')
+        }
+    }));
 
-    const analysisJsonArray = successfulAnalyses.map(a => JSON.stringify(a.analysis, null, 2));
+    const imageLabels = validPaths.map((_, i) => `Image #${i + 1}`).join(', ');
 
-    const crossRefPrompt = `You are an expert product photographer and visual analyst performing CROSS-REFERENCE SYNTHESIS.
+    const prompt = `You are an expert visual compositor and scene analyst. You are given ${validPaths.length} images (${imageLabels}) that represent DIFFERENT ELEMENTS intended to be composed into a SINGLE final image.
 
-You are given ${validPaths.length} images of THE SAME PRODUCT from different angles/contexts, plus their individual analyses below.
+## YOUR TASK
+Analyze each image and classify its role, then produce a composition blueprint.
 
-## INDIVIDUAL ANALYSES (for reference):
-${analysisJsonArray.map((json, i) => `### Image ${i + 1}:\n${json}`).join('\n\n')}
+### ROLE CLASSIFICATION RULES
+For each image, assign ONE primary role:
+- **scene**: An environment, background, room, landscape, table setting, or spatial context. Heuristics: wide field of view, multiple objects/furniture, architectural elements, horizon line, no single dominant product.
+- **product**: A single product or item that should be the hero/focus of the final composition. Heuristics: single object centered, possibly on neutral/simple background, product photography style.
+- **prop**: Accessories, garnishes, utensils, decorative items that support the scene. Heuristics: small items, multiple similar objects, clearly supplementary.
+- **person**: A human subject who should appear in the final composition. Heuristics: visible face/body/hands.
+- **unknown**: Cannot clearly classify.
 
-## YOUR TASK:
-Cross-reference ALL images and analyses to produce ONE definitive, high-confidence product identity profile.
+### ANALYSIS PER ROLE
+For each image, provide role-specific analysis:
 
-### CROSS-REFERENCING RULES:
-1. **Consensus features**: If a feature (color, shape detail, material, branding) appears consistently across 2+ images, it has HIGH confidence. Weight it heavily.
-2. **Unique-angle features**: Features visible in only one image (e.g., a back label seen only from behind) should be included but marked as single-source.
-3. **Conflict resolution**: If images disagree (e.g., lighting makes colors look different), prefer the analysis from the most neutral/well-lit image. Note the variance.
-4. **3D mental model**: Build a complete 360-degree mental model of the product. Each image fills in details from its angle.
-5. **Detail stacking**: Each additional image should ADD detail certainty, not replace previous findings. More images = higher confidence on overlapping features.
+**If role=scene:**
+- sceneDescription: What kind of environment (restaurant interior, kitchen, outdoor park, etc.)
+- lighting: Direction, quality, color temperature of the scene's light
+- colorTemperature: Warm/cool/neutral + approximate Kelvin
+- geometry: Key surfaces and spatial anchors (table, counter, floor, wall)
+- perspective: Camera angle, vanishing points, eye-level estimate
+- scaleCues: Objects that establish scale (plates, furniture, people in background)
+- suggestedProductPlacement: Where in this scene a product would naturally sit
 
-### OUTPUT FORMAT:
-Return a JSON object with this structure:
+**If role=product:**
+- productType: Specific product identification
+- colors: Exact colors with finish
+- material: Materials visible
+- shape: Shape description
+- features: Key visual features (list 5-8)
+- brandElements: Any visible branding
+- summary: 3-4 sentence description for recreating this product
+
+**If role=prop:**
+- propType: What kind of prop
+- suggestedPlacement: Where it would naturally go relative to the product
+
+**If role=person:**
+- pose: Description of pose
+- clothing: What they're wearing
+- suggestedInteraction: How they might interact with the product
+
+### OUTPUT FORMAT
+Return a JSON object:
 {
-    "productType": "specific product name with model/variant (highest confidence from consensus)",
-    "category": "main product category",
-    "subcategory": "more specific category",
-    "industry": "industry/niche",
-    "state": "condition/state of the product",
-    "material": "primary material(s) — confirmed by multiple angles",
-    "features": ["feature 1 [HIGH: seen in N images]", "feature 2 [HIGH: seen in N images]", "feature 3 [SINGLE: image X only]", "...at least 8-12 features"],
-    "colors": ["specific color with finish [confidence: high/medium]", "..."],
-    "texture": "detailed texture description synthesized from all angles (3-4 sentences)",
-    "shape": "full 3D shape description combining all viewing angles",
-    "patterns": "all patterns, prints, or visual details found across all images",
-    "qualityIndicators": ["quality sign 1", "quality sign 2"],
-    "brandElements": "all visible branding from all angles combined",
-    "targetMarket": "target market description",
-    "mood": "overall mood/style consensus",
-    "dimensionalProfile": "3D dimensional understanding built from multiple angles — describe the product shape from front, sides, top, and back as revealed by the reference images",
-    "crossRefConfidence": {
-        "colorConsistency": "high/medium/low — how consistent colors appeared across images",
-        "shapeConsistency": "high/medium/low — how well the shape matches across angles",
-        "materialConsistency": "high/medium/low — how consistently material/texture reads",
-        "overallIdentityConfidence": "high/medium/low — overall confidence in the product identity lock"
-    },
-    "summary": "A COMPREHENSIVE 5-7 sentence summary describing this product as if explaining to another AI that needs to recreate it PERFECTLY from any angle. Include product type, key visual features, colors, textures, materials, and distinctive characteristics. Mark which features are confirmed by multiple angles vs single-source. This is the master reference for product identity."
+    "elements": [
+        {
+            "index": 0,
+            "role": "scene|product|prop|person|unknown",
+            "analysis": { /* role-specific fields as described above */ }
+        },
+        // ... one entry per image, in order
+    ],
+    "primarySceneIndex": <index of best scene image, or -1 if none>,
+    "primaryProductIndex": <index of best product image, or -1 if none>,
+    "lightingBlueprint": "Unified lighting description: describe how light from the scene image should be applied to the product — direction, warmth, shadow softness, specular behavior.",
+    "placementHints": "Describe WHERE and HOW to place the product in the scene: surface, position, scale relative to scene objects, contact point.",
+    "compositionNotes": "Any additional notes about combining these elements: perspective matching, color grading adjustments, depth of field, occlusion considerations."
 }
 
-Be EXTREMELY detailed. The summary must be comprehensive enough for another AI to generate this exact product from ANY angle without seeing the images.
+Be VERY detailed in lightingBlueprint and placementHints — these are critical for the image generator to produce a realistic composite.
 Only return valid JSON.`;
 
     try {
-        const result = await model.generateContent([
-            crossRefPrompt,
-            ...imageParts
-        ]);
-
+        const result = await model.generateContent([prompt, ...imageParts]);
         const text = result.response.text();
         const parsed = parseJsonResponse(text);
 
-        if (parsed) {
+        if (parsed && Array.isArray(parsed.elements)) {
+            // Attach file paths to elements
+            parsed.elements.forEach((el, i) => {
+                el.path = validPaths[i] || null;
+            });
             return {
                 ...parsed,
-                multiRefMode: true,
-                sourceImageCount: validPaths.length,
-                individualAnalyses: successfulAnalyses.map(a => a.analysis),
-                confidenceLevel: validPaths.length >= 3 ? 'high' : 'elevated'
+                singleImageMode: false,
+                elementCount: validPaths.length
             };
         }
 
-        // Fallback: return best individual analysis + multi-ref flag
+        // Fallback: treat first as product
+        logError('analyzeSceneElements: could not parse response, falling back', {
+            service: 'product-image',
+            responsePreview: text.slice(0, 500)
+        });
+        const fallbackAnalysis = await analyzeProductImage(validPaths[0]);
         return {
-            ...successfulAnalyses[0].analysis,
-            multiRefMode: true,
-            sourceImageCount: validPaths.length,
-            confidenceLevel: 'standard'
+            elements: validPaths.map((p, i) => ({
+                index: i,
+                path: p,
+                role: i === 0 ? 'product' : 'unknown',
+                analysis: i === 0 ? fallbackAnalysis : {}
+            })),
+            primarySceneIndex: -1,
+            primaryProductIndex: 0,
+            lightingBlueprint: 'Use studio-style lighting matching the product reference.',
+            placementHints: 'Place the product centrally in the generated scene.',
+            compositionNotes: 'Fallback mode — scene element analysis failed. Treating first image as product.',
+            singleImageMode: false,
+            elementCount: validPaths.length
         };
     } catch (error) {
-        logError('Multi-ref cross-reference synthesis error', {
+        logError('analyzeSceneElements error', {
             service: 'product-image',
             imageCount: validPaths.length,
             error
         });
-
-        // Fallback to first successful analysis
-        return {
-            ...successfulAnalyses[0].analysis,
-            multiRefMode: true,
-            sourceImageCount: validPaths.length,
-            confidenceLevel: 'fallback'
-        };
+        throw error;
     }
 }
 
@@ -1220,6 +1367,7 @@ async function generateSingleAngleImage(params) {
     const {
         originalImagePath,
         additionalRefImagePaths,
+        sceneElements,
         canonicalImagePath,
         previousAngleImagePath,
         identityAnchor,
@@ -1248,33 +1396,54 @@ async function generateSingleAngleImage(params) {
         }
     });
 
-    const prompt = buildConsistentAnglePrompt({
-        identityAnchor,
-        sceneBlueprint,
-        cameraAngle,
-        outputSize,
-        additionalNotes,
-        intentSignals,
-        userSceneIntentBlock,
-        sanitizedBrandContext,
-        creativeBlock,
-        photorealGuardrails,
-        isAnchor,
-        hasCanonicalRef: !!canonicalImagePath,
-        hasPreviousRef: !!previousAngleImagePath,
-        hasMultipleRefs: isMultiRef,
-        multiRefCount: isMultiRef ? additionalRefImagePaths.length + 1 : 1,
-        retryLevel
-    });
+    // Choose prompt strategy based on mode
+    const isSceneComposition = sceneElements && !sceneElements.singleImageMode && (sceneElements.elements?.length > 1);
+
+    const prompt = isSceneComposition
+        ? buildSceneCompositionPrompt({
+            sceneElements,
+            cameraAngle,
+            outputSize,
+            additionalNotes,
+            intentSignals,
+            userSceneIntentBlock,
+            displayTextPolicyBlock: params.displayTextPolicyBlock,
+            hasDisplayText: params.hasDisplayText || false,
+            sanitizedBrandContext,
+            creativeBlock,
+            photorealGuardrails,
+            retryLevel
+        })
+        : buildConsistentAnglePrompt({
+            identityAnchor,
+            sceneBlueprint,
+            cameraAngle,
+            outputSize,
+            additionalNotes,
+            intentSignals,
+            userSceneIntentBlock,
+            displayTextPolicyBlock: params.displayTextPolicyBlock,
+            hasDisplayText: params.hasDisplayText || false,
+            sanitizedBrandContext,
+            creativeBlock,
+            photorealGuardrails,
+            isAnchor,
+            hasCanonicalRef: !!canonicalImagePath,
+            hasPreviousRef: !!previousAngleImagePath,
+            hasMultipleRefs: false,
+            multiRefCount: 1,
+            retryLevel
+        });
 
     logPromptDebug({
         tool: 'image',
         step: 'prompt-built',
         data: {
-            mode: isMultiRef ? 'multi-ref-single-angle' : 'single-angle',
+            mode: isSceneComposition ? 'scene-composition' : (isMultiRef ? 'multi-ref-single-angle' : 'single-angle'),
             modelName: modelName || MODELS.IMAGE_GEN,
             cameraAngle,
             retryLevel,
+            isSceneComposition,
             multiRefCount: isMultiRef ? additionalRefImagePaths.length + 1 : 1,
             promptPreview: prompt
         }
@@ -1408,13 +1577,22 @@ async function generateProductWithBackground(params) {
             }
         });
 
-        // Use multi-image or single-image analysis based on mode
+        // Use scene composition analysis for multi-ref, single-image analysis otherwise
         const allImagePaths = isMultiRef
             ? [originalImagePath, ...additionalRefImagePaths]
             : [originalImagePath];
-        const productAnalysis = isMultiRef
-            ? await analyzeMultipleProductImages(allImagePaths)
-            : await analyzeProductImage(originalImagePath);
+
+        let productAnalysis;
+        let sceneElements = null;
+
+        if (isMultiRef) {
+            sceneElements = await analyzeSceneElements(allImagePaths);
+            // Extract product analysis from scene elements for compatibility with existing intent/identity code
+            const productEl = sceneElements.elements?.find((_, i) => i === sceneElements.primaryProductIndex);
+            productAnalysis = productEl?.analysis || await analyzeProductImage(originalImagePath);
+        } else {
+            productAnalysis = await analyzeProductImage(originalImagePath);
+        }
 
         const intentSignals = buildIntentSignals({
             backgroundType,
@@ -1535,6 +1713,7 @@ async function generateProductWithBackground(params) {
                     successUrl = await generateSingleAngleImage({
                         originalImagePath,
                         additionalRefImagePaths: isMultiRef ? additionalRefImagePaths : [],
+                        sceneElements,
                         canonicalImagePath,
                         previousAngleImagePath,
                         identityAnchor,
@@ -1658,7 +1837,7 @@ function getFilePathFromUrl(urlPath) {
 
 module.exports = {
     analyzeProductImage,
-    analyzeMultipleProductImages,
+    analyzeSceneElements,
     generateProductWithBackground,
     generateSingleAngleImage,
     normalizeCameraAngles,
