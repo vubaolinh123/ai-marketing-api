@@ -44,10 +44,20 @@ const ProductImageSchema = new mongoose.Schema({
         default: 'Ảnh sản phẩm'
     },
     
-    // Original uploaded image
+    // Original uploaded image (primary/single image mode)
     originalImageUrl: {
         type: String,
         required: true
+    },
+
+    // Multi-reference image mode: up to 5 product images for cross-referencing
+    multiReferenceMode: {
+        type: Boolean,
+        default: false
+    },
+    referenceImageUrls: {
+        type: [String],
+        default: []
     },
     
     // AI-generated result image

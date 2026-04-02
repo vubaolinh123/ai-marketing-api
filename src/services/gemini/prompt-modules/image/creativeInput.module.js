@@ -27,6 +27,19 @@ const AD_INTENSITY_CANONICAL = {
     ]
 };
 
+// Interpretive guidance maps: tell the AI model HOW to translate each field value into visual treatment
+const AD_INTENSITY_GUIDANCE = {
+    low: 'Subtle, understated presentation. Product speaks for itself with minimal staging drama. Natural, editorial feel. Muted props, soft tones, no visual "selling" pressure.',
+    medium: 'Balanced commercial presentation. Product is clearly the hero with intentional but not aggressive staging. Professional catalog quality with moderate visual energy.',
+    high: 'Bold, attention-grabbing commercial presentation. Strong visual impact with vibrant colors, dramatic lighting contrasts, dynamic composition. High-energy advertising feel that commands attention.'
+};
+
+const REALISM_PRIORITY_GUIDANCE = {
+    photoreal: 'Strict photorealism. Must pass as an unedited DSLR photograph. No visible AI artifacts, no surreal elements. Match real-world physics for light, shadow, reflection, and material behavior.',
+    balanced: 'Primarily photorealistic with subtle creative license. Minor stylistic enhancement is acceptable (slightly elevated saturation, idealized lighting) but core product rendering must look real.',
+    creative: 'Allow creative interpretation while keeping the product recognizable. Stylistic treatments, color grading, and artistic lighting are welcome as long as product identity is preserved.'
+};
+
 function normalizeDiacritics(value) {
     return String(value || '')
         .normalize('NFD')
@@ -75,15 +88,51 @@ function normalizeCreativeInputs(input = {}) {
 function buildCreativeInputBlock(input = {}) {
     const normalized = normalizeCreativeInputs(input);
     const lines = [
-        '### CREATIVE CONTEXT',
-        `- Usage purpose: ${normalized.usagePurpose || '(not specified)'}`,
-        `- Display info: ${normalized.displayInfo || '(not specified)'}`,
-        `- Ad intensity: ${normalized.adIntensity || '(not specified)'}`,
-        `- Typography guidance: ${normalized.typographyGuidance || '(not specified)'}`,
-        `- Target audience: ${normalized.targetAudience || '(not specified)'}`,
-        `- Visual style: ${normalized.visualStyle || '(not specified)'}`,
-        `- Realism priority: ${normalized.realismPriority || '(not specified)'}`
+        '### CREATIVE CONTEXT'
     ];
+
+    // Usage purpose with interpretive guidance
+    if (normalized.usagePurpose) {
+        lines.push(`- Usage purpose: ${normalized.usagePurpose}. Tailor scene staging, mood, and visual energy to support this purpose.`);
+    } else {
+        lines.push('- Usage purpose: (not specified). Default to versatile commercial product photography.');
+    }
+
+    // Display info
+    lines.push(`- Display info: ${normalized.displayInfo || '(not specified)'}`);
+
+    // Ad intensity with interpretive guidance
+    if (normalized.adIntensity && AD_INTENSITY_GUIDANCE[normalized.adIntensity]) {
+        lines.push(`- Ad intensity: ${normalized.adIntensity}. Visual treatment: ${AD_INTENSITY_GUIDANCE[normalized.adIntensity]}`);
+    } else {
+        lines.push('- Ad intensity: (not specified). Default to medium balanced commercial presentation.');
+    }
+
+    // Typography guidance
+    lines.push(`- Typography guidance: ${normalized.typographyGuidance || '(not specified)'}`);
+
+    // Target audience with interpretive guidance
+    if (normalized.targetAudience) {
+        lines.push(`- Target audience: ${normalized.targetAudience}. Adjust visual language (color warmth, composition style, environmental cues) to resonate with this audience segment.`);
+    } else {
+        lines.push('- Target audience: (not specified)');
+    }
+
+    // Visual style with interpretive guidance
+    if (normalized.visualStyle) {
+        lines.push(`- Visual style: ${normalized.visualStyle}. Apply this style consistently to lighting mood, color grading, composition balance, and prop selection.`);
+    } else {
+        lines.push('- Visual style: (not specified). Default to clean, modern commercial photography.');
+    }
+
+    // Realism priority with interpretive guidance
+    if (normalized.realismPriority) {
+        const realismKey = normalizeDiacritics(normalized.realismPriority);
+        const guidance = REALISM_PRIORITY_GUIDANCE[realismKey] || REALISM_PRIORITY_GUIDANCE.balanced;
+        lines.push(`- Realism priority: ${normalized.realismPriority}. ${guidance}`);
+    } else {
+        lines.push(`- Realism priority: (not specified). ${REALISM_PRIORITY_GUIDANCE.photoreal}`);
+    }
 
     return {
         normalized,

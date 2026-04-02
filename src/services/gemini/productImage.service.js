@@ -31,14 +31,14 @@ if (!fs.existsSync(PRODUCT_IMAGES_DIR)) {
 
 // Background type descriptions for prompt
 const BACKGROUND_DESCRIPTIONS = {
-    'studio': 'professional photography studio with soft lighting, clean white/gray backdrop',
-    'outdoor': 'outdoor natural environment with soft daylight, nature or urban backdrop',
-    'lifestyle': 'real-life usage context showing the product being used naturally (e.g., someone holding, using, or interacting with the product)',
-    'minimal': 'ultra-clean minimal background with solid color, modern aesthetic',
-    'luxury': 'premium luxurious setting with marble, velvet, gold accents, sophisticated lighting',
-    'kitchen': 'professional modern kitchen setting with cooking equipment and utensils',
-    'restaurant': 'elegant restaurant dining setting with table, plates, professional presentation',
-    'action': 'dynamic action scene showing the product in motion or being actively used',
+    'studio': 'professional photography studio. Three-point lighting setup (soft key light at 45 degrees, fill light opposite, subtle rim/hair light for separation). Clean seamless white-to-light-gray paper backdrop with gentle gradient at the base. Neutral 5600K color temperature. Controlled specular highlights and soft diffused shadows. Commercial catalog-grade finish.',
+    'outdoor': 'outdoor natural environment with authentic daylight. Golden-hour or overcast soft-box-like natural light with gentle warm tones. Believable spatial depth with foreground, midground, and background layers. Natural elements (foliage, sky, ground texture) supporting but not competing with the product. Realistic atmospheric haze or distance blur for depth.',
+    'lifestyle': 'real-life usage context showing the product being used or interacted with naturally. Warm, inviting ambient lighting as in a well-lit home, cafe, or workspace. Human presence is natural and candid (not posed). Product is clearly identifiable even when held or in use. Environmental storytelling that communicates the product benefit. Shallow depth of field keeps product sharp against a contextually rich but non-distracting background.',
+    'minimal': 'ultra-clean minimal background. Single solid color (white, off-white, soft gray, or muted pastel) with no texture or pattern. Perfectly even, shadow-free lighting or a single soft directional shadow for subtle depth. Modern Scandinavian aesthetic. Maximum visual breathing room around the product. No props, no distractions, product-only purity.',
+    'luxury': 'premium luxurious setting evoking high-end brand campaigns. Rich materials: polished marble surface, brushed brass or gold accents, deep velvet fabric drapes, or dark slate. Dramatic chiaroscuro lighting with warm key light and deep, controlled shadows. Subtle specular reflections on glossy surfaces. Color palette: deep blacks, warm golds, rich burgundy, or cool silver. Every element communicates exclusivity and craftsmanship.',
+    'kitchen': 'professional modern kitchen setting. Warm practical ambient lighting (3200-4000K) balanced by soft overhead or window fill. Stainless steel, natural wood, or stone countertop surfaces. Contextual props (cutting board, fresh herbs, quality cookware) arranged with editorial intent. Steam, moisture, or oil sheen where temperature-appropriate. Clean but lived-in, not sterile. Food-magazine editorial quality.',
+    'restaurant': 'elegant restaurant dining setting. Sophisticated table setup with quality tableware, linen, and glassware. Warm ambient lighting with accent spots (candle glow, pendant lights). Rich color palette of the dining environment complementing the product. Depth-of-field separates the hero product from background diners or decor. Fine-dining editorial photography quality with intentional composition.',
+    'action': 'dynamic action scene showing the product in motion or being actively used. Frozen-moment photography with crisp subject against motion-implied background. Energetic composition with diagonal lines and dynamic balance. Lighting emphasizes the action: directional key light with motion-trail ambient. Product identity remains fully readable even during action. Sports/adventure photography aesthetic.',
     'custom': '' // User will provide their own description
 };
 
@@ -62,12 +62,52 @@ const OUTPUT_SIZES = {
 
 const CAMERA_ANGLES = ['wide', 'medium', 'closeup', 'topdown', 'detail'];
 
+// Aspect-ratio-aware composition adjustments per angle
+// Helps the AI understand how a given angle plays differently in vertical vs square vs landscape frames
+const ASPECT_RATIO_ANGLE_ADJUSTMENTS = {
+    'wide': {
+        '9:16': 'Vertical wide shot: stack depth vertically — foreground product at lower third, environment fills upper two-thirds. Use vertical leading lines (columns, shelves, walls) to guide the eye.',
+        '16:9': 'Cinematic wide shot: full horizontal span with product placed at power point (left or right third). Maximize horizontal environmental storytelling.',
+        '4:5': 'Slightly tall wide shot: give modest vertical breathing room above the scene. Product in lower-center with environmental context above.',
+        '1:1': 'Square wide shot: centered composition with equal environmental context on all sides. Use symmetry or rule-of-thirds diagonally.',
+        '3:4': 'Portrait wide shot: modest vertical emphasis. Product slightly below center with environment framing it above and to the sides.'
+    },
+    'medium': {
+        '9:16': 'Vertical medium shot: product occupies middle band of frame with vertical negative space above and below for context. Ideal for stories/reels aspect.',
+        '16:9': 'Landscape medium shot: product offset to one side with environmental context filling the horizontal remainder. Cinematic balance.',
+        '4:5': 'Social-optimized medium shot: product slightly above center with tight but balanced framing. Instagram-feed ready.',
+        '1:1': 'Square medium shot: classic product-centered composition. Equal padding on all sides.',
+        '3:4': 'Tall medium shot: product centered with slight vertical emphasis. Clean and balanced.'
+    },
+    'closeup': {
+        '9:16': 'Vertical close-up: product fills the tall frame with key features positioned at eye-level center band. Minimal but visible environment at top and bottom edges.',
+        '16:9': 'Landscape close-up: product stretched across horizontal frame. Show side-to-side details. Good for banner/header use.',
+        '4:5': 'Portrait close-up: product fills frame with tight vertical crop. Ideal for social media posts.',
+        '1:1': 'Square close-up: product centered and filling frame evenly. Symmetrical, impactful.',
+        '3:4': 'Tall close-up: product fills frame with slight vertical emphasis on hero features.'
+    },
+    'topdown': {
+        '9:16': 'Vertical flat-lay: arrange elements in a vertical flow — product centered with props stacked above and below. Phone-screen friendly layout.',
+        '16:9': 'Landscape flat-lay: spread elements horizontally. Product center-left or center-right with props arranged along the horizontal axis.',
+        '4:5': 'Portrait flat-lay: slightly taller arrangement. Product centered with modest vertical spacing for props.',
+        '1:1': 'Square flat-lay: classic grid or radial arrangement centered on the product. Maximize symmetry.',
+        '3:4': 'Tall flat-lay: vertical arrangement with product at visual center of gravity.'
+    },
+    'detail': {
+        '9:16': 'Vertical macro: fill the tall frame with a vertical slice of the product detail. Show texture gradient from sharp focus to soft bokeh along the vertical axis.',
+        '16:9': 'Landscape macro: horizontal detail sweep showing texture and material across the wide frame. Good for revealing surface patterns.',
+        '4:5': 'Portrait macro: tight vertical crop on the most compelling detail area. Social-optimized detail showcase.',
+        '1:1': 'Square macro: centered detail fill. Maximum visual impact on the hero texture or feature.',
+        '3:4': 'Tall macro: vertical detail emphasis with shallow depth of field gradient.'
+    }
+};
+
 const CAMERA_ANGLE_PROMPTS = {
-    wide: 'wide shot, full composition, product and surrounding context clearly visible',
-    medium: 'medium shot, balanced framing between product and context',
-    closeup: 'close-up shot, product dominates frame while keeping contextual cues',
-    topdown: 'top-down / flat-lay perspective with clear product arrangement',
-    detail: 'macro detail shot, emphasize premium texture, material, and craftsmanship details'
+    wide: 'wide establishing shot (approx. 35mm equivalent). Full scene composition with product at roughly 30-40% of frame area. Show complete environment, spatial depth, and surrounding context. Shallow-to-medium depth of field keeps product sharp while background retains readable detail. Natural leading lines draw the eye to the product.',
+    medium: 'medium shot (approx. 50-85mm equivalent). Product occupies 50-65% of frame with balanced negative space. Subject-to-background ratio emphasizes product while preserving environmental context. Moderate depth of field with soft background separation. Classic commercial photography framing with rule-of-thirds placement.',
+    closeup: 'close-up shot (approx. 85-135mm equivalent). Product fills 70-85% of frame, dominating the composition. Shallow depth of field creates pronounced background bokeh while keeping the entire product tack-sharp. Minimal but visible contextual cues at frame edges anchor the scene. Highlight hero features, labels, and key selling points.',
+    topdown: 'top-down / flat-lay perspective, camera directly overhead at 90-degree angle. Clean spatial arrangement with intentional negative space between elements. Even, shadow-free lighting or soft directional shadow for depth. Product centered or placed using golden-ratio grid. Ideal for showing product footprint, layout, and surrounding accessories.',
+    detail: 'macro detail shot (approx. 100mm+ macro equivalent). Extreme close-up emphasizing premium texture, material grain, surface finish, and craftsmanship details. Very shallow depth of field with razor-thin focal plane on the hero detail. Capture tactile qualities: stitching, embossing, brushed metal, condensation, or ingredient texture. Fill frame with the most visually compelling product detail.'
 };
 
 function normalizeCameraAngles(cameraAngles) {
@@ -451,23 +491,55 @@ function buildUserSceneIntentBlock(intentSignals = {}) {
 function buildIdentityAnchor(productAnalysis = {}) {
     const colors = Array.isArray(productAnalysis.colors) && productAnalysis.colors.length > 0
         ? productAnalysis.colors.join(', ')
-        : 'match the exact colors from original image';
+        : 'CRITICAL: match the exact colors from the original reference image pixel-by-pixel. Do not shift hue, saturation, or brightness.';
 
     const keyFeatures = Array.isArray(productAnalysis.features) && productAnalysis.features.length > 0
         ? productAnalysis.features.slice(0, 6).join('; ')
-        : 'preserve all distinctive visual features from original image';
+        : 'CRITICAL: preserve ALL distinctive visual features exactly as they appear in the original reference image. Copy every detail.';
 
-    return [
-        `Product type: ${productAnalysis.productType || productAnalysis.category || 'same product as reference'}`,
-        `Shape: ${productAnalysis.shape || 'same silhouette and proportions as reference image'}`,
-        `Material/texture: ${productAnalysis.material || ''} ${productAnalysis.texture || ''}`.trim() || 'same material and texture as reference image',
+    const shapeDesc = productAnalysis.shape
+        ? productAnalysis.shape
+        : 'CRITICAL: replicate the exact silhouette, proportions, aspect ratio, and dimensional relationships from the original reference image. No reshaping.';
+
+    const materialDesc = `${productAnalysis.material || ''} ${productAnalysis.texture || ''}`.trim()
+        || 'CRITICAL: replicate the exact material appearance, surface finish, and tactile quality visible in the original reference image.';
+
+    const patternDesc = productAnalysis.patterns || productAnalysis.brandElements
+        || 'CRITICAL: preserve all logos, labels, marks, engravings, and surface details exactly. Do not add, remove, or alter any branding element.';
+
+    const lines = [
+        `Product type: ${productAnalysis.productType || productAnalysis.category || 'same product as reference — identify from attached reference image'}`,
+        `Shape: ${shapeDesc}`,
+        `Material/texture: ${materialDesc}`,
         `Colors: ${colors}`,
-        `Patterns/marks: ${productAnalysis.patterns || productAnalysis.brandElements || 'no changes to logos/marks/details'}`,
+        `Patterns/marks: ${patternDesc}`,
         `Must-keep features: ${keyFeatures}`,
-        'Identity lock rule: Keep product identity at 90-95% consistency with the original reference across all angles.',
+    ];
+
+    // Multi-reference enhanced identity lock
+    if (productAnalysis.multiRefMode && productAnalysis.sourceImageCount > 1) {
+        const confidence = productAnalysis.crossRefConfidence || {};
+        lines.push(
+            `Multi-reference mode: ACTIVE (${productAnalysis.sourceImageCount} source images analyzed).`,
+            `Cross-reference confidence: color=${confidence.colorConsistency || 'n/a'}, shape=${confidence.shapeConsistency || 'n/a'}, material=${confidence.materialConsistency || 'n/a'}, overall=${confidence.overallIdentityConfidence || 'n/a'}.`,
+            productAnalysis.dimensionalProfile
+                ? `3D dimensional profile: ${productAnalysis.dimensionalProfile}`
+                : '',
+            'Identity lock rule (MULTI-REF): Cross-referenced product identity from multiple angles has HIGHER confidence. Maintain 95%+ consistency with the consensus features. Features confirmed by multiple source images are IMMUTABLE. Single-source features should still be preserved.',
+            'IMPORTANT: You have multiple reference images showing this product from different angles. Use ALL of them to build a complete understanding of the product. When generating from a new angle, check which reference image is closest to the target angle and weight it highest for geometric/perspective details.'
+        );
+    } else {
+        lines.push(
+            'Identity lock rule: Keep product identity at 90-95% consistency with the original reference across all angles. When in doubt, copy the reference exactly rather than improvising.'
+        );
+    }
+
+    lines.push(
         'Scene consistency rule: Keep scene coherent with user intent for this generation; never force original reference background if it conflicts with requested scene intent.',
-        'Allowed variation rule: Camera viewpoint/framing and minor natural interaction motion only.'
-    ].join('\n');
+        'Allowed variation rule: Camera viewpoint/framing and minor natural interaction motion only. Product shape, color, material, branding, and proportions are IMMUTABLE.'
+    );
+
+    return lines.filter(Boolean).join('\n');
 }
 
 async function buildConsistentSceneBlueprint(params) {
@@ -546,21 +618,57 @@ function buildConsistentAnglePrompt(params) {
         isAnchor,
         hasCanonicalRef,
         hasPreviousRef,
+        hasMultipleRefs = false,
+        multiRefCount = 1,
         retryLevel
     } = params;
 
     const sizeInfo = OUTPUT_SIZES[outputSize] || OUTPUT_SIZES['1:1'];
     const angleDescription = CAMERA_ANGLE_PROMPTS[cameraAngle] || CAMERA_ANGLE_PROMPTS.wide;
 
-    const attachedReferences = [
-        '- Image #1: ORIGINAL PRODUCT (highest priority identity lock)',
-        hasCanonicalRef ? '- Image #2: CANONICAL ANCHOR IMAGE (second priority scene lock)' : null,
-        hasPreviousRef ? '- Image #3: PREVIOUS ANGLE IMAGE (continuity support)' : null,
-    ].filter(Boolean).join('\n');
+    // Get aspect-ratio-specific composition guidance for this angle
+    const aspectRatioAdjustment = ASPECT_RATIO_ANGLE_ADJUSTMENTS[cameraAngle]?.[outputSize] || '';
 
-    const retryInstruction = retryLevel > 0
-        ? `\n### RETRY MODE (attempt ${retryLevel + 1})\nBe extra strict about identity continuity. Reduce any style drift. Keep all immutable attributes exactly consistent with references.`
+    const attachedReferences = hasMultipleRefs
+        ? [
+            `- Images #1 to #${multiRefCount}: MULTI-REFERENCE PRODUCT IMAGES (${multiRefCount} source images from different angles — use ALL to build complete 3D product understanding)`,
+            hasCanonicalRef ? `- Image #${multiRefCount + 1}: CANONICAL ANCHOR IMAGE (scene consistency lock)` : null,
+            hasPreviousRef ? `- Image #${multiRefCount + (hasCanonicalRef ? 2 : 1)}: PREVIOUS ANGLE IMAGE (continuity support)` : null,
+        ].filter(Boolean).join('\n')
+        : [
+            '- Image #1: ORIGINAL PRODUCT (highest priority identity lock)',
+            hasCanonicalRef ? '- Image #2: CANONICAL ANCHOR IMAGE (second priority scene lock)' : null,
+            hasPreviousRef ? '- Image #3: PREVIOUS ANGLE IMAGE (continuity support)' : null,
+        ].filter(Boolean).join('\n');
+
+    const multiRefInstructions = hasMultipleRefs
+        ? `\n### MULTI-REFERENCE IMAGE STRATEGY (${multiRefCount} source images)
+- You are given ${multiRefCount} different images of THE SAME PRODUCT from different angles/contexts.
+- Build a complete 3D mental model by synthesizing ALL reference images together.
+- Features visible consistently across multiple references have the HIGHEST confidence — they are IMMUTABLE.
+- Features visible in only one reference should still be preserved but can be inferred from context.
+- When generating the target angle, identify which reference image(s) are geometrically closest to the requested angle and weight their perspective details highest.
+- Color, material, branding, and proportions must match the CONSENSUS across all references.
+- IMPORTANT: More reference images = higher confidence. Use this to produce the most accurate product representation possible.`
         : '';
+
+    const retryInstruction = retryLevel === 1
+        ? `\n### RETRY MODE (attempt 2 of 3)
+Recovery strategy: The previous attempt may have drifted from the reference.
+- Give 100% priority to the ORIGINAL reference image for product identity. Copy its colors, shape, and details exactly.
+- Reduce creative interpretation. Stay literal and faithful to references.
+- If the canonical anchor image exists, match its scene lighting and color temperature precisely.
+- Simplify the scene slightly: fewer props, less environmental complexity, more focus on product clarity.`
+        : retryLevel >= 2
+            ? `\n### RETRY MODE — MAXIMUM FIDELITY (final attempt)
+Recovery strategy: Previous attempts failed to maintain consistency. Apply maximum constraints:
+- COPY the product from the original reference as faithfully as possible. Zero creative liberty on product appearance.
+- Use the simplest possible interpretation of the scene that still honors the user request.
+- Minimize background complexity. Prefer clean, uncluttered compositions.
+- Match the canonical anchor image lighting and color grading exactly if available.
+- When in doubt about any detail, default to what is visible in the original reference image.
+- Treat this as a "safety" generation: quality and consistency over creativity.`
+            : '';
 
     const anchorInstruction = isAnchor
         ? 'You are generating the canonical anchor image for this batch. This image will be used as the visual baseline for all other angles.'
@@ -597,9 +705,12 @@ Generate one image that belongs to the same angle set with high consistency.
 ${attachedReferences}
 
 Reference usage policy:
-- ORIGINAL and CANONICAL references are identity lock sources for product shape/material/colors/labels.
+${hasMultipleRefs
+    ? `- ALL ${multiRefCount} product reference images are identity lock sources. Cross-reference them to build the most accurate product model.`
+    : '- ORIGINAL and CANONICAL references are identity lock sources for product shape/material/colors/labels.'}
 - PREVIOUS ANGLE reference is continuity support only.
 ${referenceUsagePolicy}
+${multiRefInstructions}
 
 ### ROLE
 ${anchorInstruction}
@@ -615,6 +726,7 @@ ${identityAnchor}
 ### ANGLE DELTA (ONLY THIS MAY CHANGE)
 - Target camera angle: ${cameraAngle}
 - Framing guidance: ${intentSignals?.wantsPreserveOriginalComposition ? `KEEP ORIGINAL FRAMING — do not zoom in, do not crop; maintain the same field-of-view and composition as the reference. Original angle hint: ${angleDescription}` : angleDescription}
+${aspectRatioAdjustment ? `- Aspect-ratio composition note (${outputSize}): ${aspectRatioAdjustment}` : ''}
 
 ### USER SCENE INTENT (HIGH PRIORITY)
 ${userSceneIntentBlock || '- Follow user scene request while preserving product identity lock.'}
@@ -640,6 +752,164 @@ ${sanitizedBrandContext || '(none)'}`,
         creativeBlock,
         photorealGuardrails
     ]);
+}
+
+/**
+ * Analyze multiple product reference images and build a consolidated identity profile.
+ * Uses a two-phase approach:
+ *   Phase 1: Analyze each image individually to capture angle-specific details
+ *   Phase 2: Cross-reference all analyses to produce a high-confidence consensus profile
+ *
+ * @param {string[]} imagePaths - Array of file paths to product images (max 5)
+ * @returns {Promise<Object>} Consolidated product analysis with confidence scoring
+ */
+async function analyzeMultipleProductImages(imagePaths) {
+    if (!Array.isArray(imagePaths) || imagePaths.length === 0) {
+        throw new Error('At least one image path is required');
+    }
+
+    // If only one image, fall back to single analysis
+    if (imagePaths.length === 1) {
+        const analysis = await analyzeProductImage(imagePaths[0]);
+        return {
+            ...analysis,
+            multiRefMode: false,
+            sourceImageCount: 1,
+            confidenceLevel: 'standard'
+        };
+    }
+
+    const validPaths = imagePaths.filter(p => p && fs.existsSync(p)).slice(0, 5);
+    if (validPaths.length === 0) {
+        throw new Error('No valid image files found');
+    }
+
+    // Phase 1: Analyze each image individually in parallel
+    const individualAnalyses = await Promise.all(
+        validPaths.map(async (imgPath, index) => {
+            try {
+                const analysis = await analyzeProductImage(imgPath);
+                return { index, path: imgPath, analysis, success: true };
+            } catch (error) {
+                logError('Multi-ref individual analysis error', {
+                    service: 'product-image',
+                    imageIndex: index,
+                    imagePath: imgPath,
+                    error
+                });
+                return { index, path: imgPath, analysis: null, success: false };
+            }
+        })
+    );
+
+    const successfulAnalyses = individualAnalyses.filter(a => a.success && a.analysis);
+    if (successfulAnalyses.length === 0) {
+        throw new Error('Failed to analyze any reference images');
+    }
+
+    // Phase 2: Cross-reference synthesis using Gemini Vision with ALL images
+    const model = getModel('VISION');
+    const imageParts = validPaths.map(imgPath => {
+        const buffer = fs.readFileSync(imgPath);
+        return {
+            inlineData: {
+                mimeType: getMimeTypeFromPath(imgPath),
+                data: buffer.toString('base64')
+            }
+        };
+    });
+
+    const analysisJsonArray = successfulAnalyses.map(a => JSON.stringify(a.analysis, null, 2));
+
+    const crossRefPrompt = `You are an expert product photographer and visual analyst performing CROSS-REFERENCE SYNTHESIS.
+
+You are given ${validPaths.length} images of THE SAME PRODUCT from different angles/contexts, plus their individual analyses below.
+
+## INDIVIDUAL ANALYSES (for reference):
+${analysisJsonArray.map((json, i) => `### Image ${i + 1}:\n${json}`).join('\n\n')}
+
+## YOUR TASK:
+Cross-reference ALL images and analyses to produce ONE definitive, high-confidence product identity profile.
+
+### CROSS-REFERENCING RULES:
+1. **Consensus features**: If a feature (color, shape detail, material, branding) appears consistently across 2+ images, it has HIGH confidence. Weight it heavily.
+2. **Unique-angle features**: Features visible in only one image (e.g., a back label seen only from behind) should be included but marked as single-source.
+3. **Conflict resolution**: If images disagree (e.g., lighting makes colors look different), prefer the analysis from the most neutral/well-lit image. Note the variance.
+4. **3D mental model**: Build a complete 360-degree mental model of the product. Each image fills in details from its angle.
+5. **Detail stacking**: Each additional image should ADD detail certainty, not replace previous findings. More images = higher confidence on overlapping features.
+
+### OUTPUT FORMAT:
+Return a JSON object with this structure:
+{
+    "productType": "specific product name with model/variant (highest confidence from consensus)",
+    "category": "main product category",
+    "subcategory": "more specific category",
+    "industry": "industry/niche",
+    "state": "condition/state of the product",
+    "material": "primary material(s) — confirmed by multiple angles",
+    "features": ["feature 1 [HIGH: seen in N images]", "feature 2 [HIGH: seen in N images]", "feature 3 [SINGLE: image X only]", "...at least 8-12 features"],
+    "colors": ["specific color with finish [confidence: high/medium]", "..."],
+    "texture": "detailed texture description synthesized from all angles (3-4 sentences)",
+    "shape": "full 3D shape description combining all viewing angles",
+    "patterns": "all patterns, prints, or visual details found across all images",
+    "qualityIndicators": ["quality sign 1", "quality sign 2"],
+    "brandElements": "all visible branding from all angles combined",
+    "targetMarket": "target market description",
+    "mood": "overall mood/style consensus",
+    "dimensionalProfile": "3D dimensional understanding built from multiple angles — describe the product shape from front, sides, top, and back as revealed by the reference images",
+    "crossRefConfidence": {
+        "colorConsistency": "high/medium/low — how consistent colors appeared across images",
+        "shapeConsistency": "high/medium/low — how well the shape matches across angles",
+        "materialConsistency": "high/medium/low — how consistently material/texture reads",
+        "overallIdentityConfidence": "high/medium/low — overall confidence in the product identity lock"
+    },
+    "summary": "A COMPREHENSIVE 5-7 sentence summary describing this product as if explaining to another AI that needs to recreate it PERFECTLY from any angle. Include product type, key visual features, colors, textures, materials, and distinctive characteristics. Mark which features are confirmed by multiple angles vs single-source. This is the master reference for product identity."
+}
+
+Be EXTREMELY detailed. The summary must be comprehensive enough for another AI to generate this exact product from ANY angle without seeing the images.
+Only return valid JSON.`;
+
+    try {
+        const result = await model.generateContent([
+            crossRefPrompt,
+            ...imageParts
+        ]);
+
+        const text = result.response.text();
+        const parsed = parseJsonResponse(text);
+
+        if (parsed) {
+            return {
+                ...parsed,
+                multiRefMode: true,
+                sourceImageCount: validPaths.length,
+                individualAnalyses: successfulAnalyses.map(a => a.analysis),
+                confidenceLevel: validPaths.length >= 3 ? 'high' : 'elevated'
+            };
+        }
+
+        // Fallback: return best individual analysis + multi-ref flag
+        return {
+            ...successfulAnalyses[0].analysis,
+            multiRefMode: true,
+            sourceImageCount: validPaths.length,
+            confidenceLevel: 'standard'
+        };
+    } catch (error) {
+        logError('Multi-ref cross-reference synthesis error', {
+            service: 'product-image',
+            imageCount: validPaths.length,
+            error
+        });
+
+        // Fallback to first successful analysis
+        return {
+            ...successfulAnalyses[0].analysis,
+            multiRefMode: true,
+            sourceImageCount: validPaths.length,
+            confidenceLevel: 'fallback'
+        };
+    }
 }
 
 /**
@@ -949,6 +1219,7 @@ async function overlayLogo(imagePath, logoPath, position, outputSize) {
 async function generateSingleAngleImage(params) {
     const {
         originalImagePath,
+        additionalRefImagePaths,
         canonicalImagePath,
         previousAngleImagePath,
         identityAnchor,
@@ -968,6 +1239,8 @@ async function generateSingleAngleImage(params) {
         retryLevel = 0,
         modelName
     } = params;
+
+    const isMultiRef = Array.isArray(additionalRefImagePaths) && additionalRefImagePaths.length > 0;
 
     const imageModel = getModel('IMAGE_GEN', modelName || MODELS.IMAGE_GEN, {
         generationConfig: {
@@ -989,6 +1262,8 @@ async function generateSingleAngleImage(params) {
         isAnchor,
         hasCanonicalRef: !!canonicalImagePath,
         hasPreviousRef: !!previousAngleImagePath,
+        hasMultipleRefs: isMultiRef,
+        multiRefCount: isMultiRef ? additionalRefImagePaths.length + 1 : 1,
         retryLevel
     });
 
@@ -996,20 +1271,26 @@ async function generateSingleAngleImage(params) {
         tool: 'image',
         step: 'prompt-built',
         data: {
-            mode: 'single-angle',
+            mode: isMultiRef ? 'multi-ref-single-angle' : 'single-angle',
             modelName: modelName || MODELS.IMAGE_GEN,
             cameraAngle,
             retryLevel,
+            multiRefCount: isMultiRef ? additionalRefImagePaths.length + 1 : 1,
             promptPreview: prompt
         }
     });
 
+    // Build image payload: primary image first, then additional references, then canonical/previous
     const originalPart = toInlineDataPart(originalImagePath);
+    const additionalParts = isMultiRef
+        ? additionalRefImagePaths.map(p => toInlineDataPart(p)).filter(Boolean)
+        : [];
     const canonicalPart = toInlineDataPart(canonicalImagePath);
     const previousPart = toInlineDataPart(previousAngleImagePath);
 
     const requestPayload = [
         originalPart,
+        ...additionalParts,
         canonicalPart,
         previousPart,
         prompt
@@ -1081,6 +1362,7 @@ async function generateSingleAngleImage(params) {
 async function generateProductWithBackground(params) {
     const {
         originalImagePath,
+        additionalRefImagePaths,
         backgroundType,
         cameraAngles,
         customBackground,
@@ -1100,6 +1382,8 @@ async function generateProductWithBackground(params) {
         modelName
     } = params;
 
+    const isMultiRef = Array.isArray(additionalRefImagePaths) && additionalRefImagePaths.length > 0;
+
     try {
         logPromptDebug({
             tool: 'image',
@@ -1118,11 +1402,19 @@ async function generateProductWithBackground(params) {
                 visualStyle,
                 realismPriority,
                 hasBrandContext: !!brandContext,
-                brandContextLengthRaw: (brandContext || '').length
+                brandContextLengthRaw: (brandContext || '').length,
+                multiRefMode: isMultiRef,
+                totalRefImages: isMultiRef ? additionalRefImagePaths.length + 1 : 1
             }
         });
 
-        const productAnalysis = await analyzeProductImage(originalImagePath);
+        // Use multi-image or single-image analysis based on mode
+        const allImagePaths = isMultiRef
+            ? [originalImagePath, ...additionalRefImagePaths]
+            : [originalImagePath];
+        const productAnalysis = isMultiRef
+            ? await analyzeMultipleProductImages(allImagePaths)
+            : await analyzeProductImage(originalImagePath);
 
         const intentSignals = buildIntentSignals({
             backgroundType,
@@ -1242,6 +1534,7 @@ async function generateProductWithBackground(params) {
 
                     successUrl = await generateSingleAngleImage({
                         originalImagePath,
+                        additionalRefImagePaths: isMultiRef ? additionalRefImagePaths : [],
                         canonicalImagePath,
                         previousAngleImagePath,
                         identityAnchor,
@@ -1365,6 +1658,7 @@ function getFilePathFromUrl(urlPath) {
 
 module.exports = {
     analyzeProductImage,
+    analyzeMultipleProductImages,
     generateProductWithBackground,
     generateSingleAngleImage,
     normalizeCameraAngles,

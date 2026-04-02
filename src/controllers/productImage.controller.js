@@ -121,6 +121,8 @@ exports.generateProductImage = async (req, res) => {
     try {
         const {
             originalImageUrl,
+            referenceImageUrls,
+            multiReferenceMode,
             backgroundType,
             cameraAngles,
             customBackground,
@@ -144,6 +146,8 @@ exports.generateProductImage = async (req, res) => {
             step: 'received-input',
             data: {
                 originalImageUrl,
+                referenceImageUrls,
+                multiReferenceMode,
                 backgroundType,
                 cameraAngles,
                 customBackground,
@@ -179,6 +183,18 @@ exports.generateProductImage = async (req, res) => {
             });
         }
 
+        // Validate multi-reference images if provided
+        const isMultiRef = !!multiReferenceMode && Array.isArray(referenceImageUrls) && referenceImageUrls.length > 0;
+        const validatedRefUrls = [];
+        if (isMultiRef) {
+            for (const refUrl of referenceImageUrls.slice(0, 4)) { // max 4 additional (5 total with primary)
+                const trimmed = typeof refUrl === 'string' ? refUrl.trim() : '';
+                if (trimmed.startsWith('/uploads/')) {
+                    validatedRefUrls.push(trimmed);
+                }
+            }
+        }
+
         const normalizedBackgroundType = backgroundType || 'studio';
         const normalizedCustomBackground = typeof customBackground === 'string' ? customBackground.trim() : '';
         if (normalizedBackgroundType === 'custom' && !normalizedCustomBackground) {
@@ -200,6 +216,8 @@ exports.generateProductImage = async (req, res) => {
             userId: req.user._id,
             title: title || 'Ảnh sản phẩm ' + new Date().toLocaleDateString('vi-VN'),
             originalImageUrl: normalizedOriginalImageUrl,
+            multiReferenceMode: isMultiRef,
+            referenceImageUrls: validatedRefUrls,
             backgroundType: normalizedBackgroundType,
             cameraAngles: normalizedAngles,
             generatedImages: normalizedAngles.map((angle) => ({
@@ -258,12 +276,18 @@ exports.generateProductImage = async (req, res) => {
         // Get full path to original image
         const originalImagePath = geminiService.productImageService.getFilePathFromUrl(normalizedOriginalImageUrl);
 
+        // Get full paths to additional reference images if multi-ref mode
+        const additionalRefImagePaths = validatedRefUrls.map(url =>
+            geminiService.productImageService.getFilePathFromUrl(url)
+        );
+
         let heartbeatTimer = null;
         try {
             heartbeatTimer = startHeartbeatTimer(productImage._id);
             // Generate the image
             const generatedImages = await geminiService.productImageService.generateProductWithBackground({
                 originalImagePath,
+                additionalRefImagePaths: isMultiRef ? additionalRefImagePaths : [],
                 backgroundType: normalizedBackgroundType,
                 cameraAngles: normalizedAngles,
                 customBackground: normalizedCustomBackground,
@@ -484,9 +508,17 @@ exports.regenerateProductImage = async (req, res) => {
         let heartbeatTimer = null;
         try {
             heartbeatTimer = startHeartbeatTimer(originalImage._id);
+
+            // Get additional reference image paths for multi-ref mode
+            const isMultiRef = originalImage.multiReferenceMode && Array.isArray(originalImage.referenceImageUrls) && originalImage.referenceImageUrls.length > 0;
+            const additionalRefImagePaths = isMultiRef
+                ? originalImage.referenceImageUrls.map(url => geminiService.productImageService.getFilePathFromUrl(url))
+                : [];
+
             // Regenerate the image
             const generatedImages = await geminiService.productImageService.generateProductWithBackground({
                 originalImagePath,
+                additionalRefImagePaths,
                 backgroundType: originalImage.backgroundType,
                 cameraAngles: normalizedAngles,
                 customBackground: normalizedCustomBackground,
@@ -712,6 +744,7 @@ exports.deleteProductImage = async (req, res) => {
         const imagePaths = [
             image.originalImageUrl,
             image.generatedImageUrl,
+            ...(Array.isArray(image.referenceImageUrls) ? image.referenceImageUrls : []),
             ...(Array.isArray(image.generatedImages)
                 ? image.generatedImages.map((item) => item.imageUrl)
                 : [])
