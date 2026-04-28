@@ -38,11 +38,10 @@ if (!fs.existsSync(AI_IMAGES_DIR)) {
  * @param {Object} options - Generation options
  * @returns {Promise<string>} URL path to saved image
  */
-async function generateImage(prompt, options = {}) {
+async function generateImage(prompt, options = {}, modelName = null) {
     try {
-        // Use Gemini 2.0 Flash experimental for native image generation
-        const { MODELS } = require('./gemini.config');
-        const imageModel = getModel('IMAGE_GEN', null, {
+        // Use Gemini image generation model (resolved from user DB settings or DEFAULT_MODELS fallback)
+        const imageModel = getModel('IMAGE_GEN', modelName, {
             generationConfig: {
                 responseModalities: ['TEXT', 'IMAGE']
             }
@@ -273,7 +272,7 @@ Chỉ trả về JSON, không có text thêm.`;
 
         // Step 2: Generate actual image using the imagePrompt
         if (parsed.imagePrompt) {
-            parsed.imageUrl = await generateImage(parsed.imagePrompt);
+            parsed.imageUrl = await generateImage(parsed.imagePrompt, {}, modelName);
             logPromptDebug({
                 tool: 'article',
                 step: 'ai-response',

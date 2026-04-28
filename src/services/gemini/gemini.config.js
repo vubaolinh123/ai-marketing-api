@@ -24,9 +24,9 @@ const genAI = new GoogleGenerativeAI(process.env.API_KEY_GEMINI);
 
 // Model configurations
 const MODELS = {
-    TEXT: DEFAULT_MODELS.text || 'gemini-2.0-flash',
-    VISION: DEFAULT_MODELS.vision || 'gemini-2.0-flash',
-    IMAGE_GEN: DEFAULT_MODELS.imageGen || 'gemini-2.0-flash-exp-image-generation'
+    TEXT: DEFAULT_MODELS.text || 'gemini-2.5-flash',
+    VISION: DEFAULT_MODELS.vision || 'gemini-2.5-flash',
+    IMAGE_GEN: DEFAULT_MODELS.imageGen || 'gemini-3-pro-image-preview'
 };
 
 // Purpose labels for prompts

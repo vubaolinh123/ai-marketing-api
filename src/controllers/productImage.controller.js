@@ -208,8 +208,9 @@ exports.generateProductImage = async (req, res) => {
         const normalizedDisplayInfo = normalizeDisplayInfo(displayInfo);
         const processingStartedAt = new Date();
 
-        // Get user's selected model for image generation
+        // Get user's selected models for image generation and vision analysis
         const imageGenModel = await getModelForTask('imageGen', req.user._id);
+        const visionModel = await getModelForTask('vision', req.user._id);
 
         // Create initial record with processing status
         const productImage = await ProductImage.create({
@@ -304,7 +305,8 @@ exports.generateProductImage = async (req, res) => {
                 outputSize: outputSize || '1:1',
                 additionalNotes,
                 brandContext,
-                modelName: imageGenModel
+                modelName: imageGenModel,
+                visionModelName: visionModel
             });
 
             logPromptDebug({
@@ -487,6 +489,7 @@ exports.regenerateProductImage = async (req, res) => {
         if (!originalImage.modelUsed && imageGenModel) {
             originalImage.modelUsed = imageGenModel;
         }
+        const visionModel = await getModelForTask('vision', req.user._id);
 
         // Delete old generated image(s) before regenerating (to save storage)
         const oldGeneratedUrls = [
@@ -547,7 +550,8 @@ exports.regenerateProductImage = async (req, res) => {
                 outputSize: originalImage.outputSize,
                 additionalNotes: combinedAdditionalNotes,
                 brandContext,
-                modelName: imageGenModel
+                modelName: imageGenModel,
+                visionModelName: visionModel
             });
 
             logPromptDebug({

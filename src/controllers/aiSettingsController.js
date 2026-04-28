@@ -70,8 +70,8 @@ const defaultSettings = {
     },
     aiModels: {
         textModel: 'gemini-2.5-flash',
-        visionModel: 'gemini-2.0-flash',
-        imageGenModel: 'gemini-2.0-flash-exp-image-generation'
+        visionModel: 'gemini-2.5-flash',
+        imageGenModel: 'gemini-3-pro-image-preview'
     }
 };
 

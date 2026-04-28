@@ -111,7 +111,8 @@ exports.generateArticle = async (req, res) => {
         });
 
         if (mode === 'manual' && normalizedImageUrls.length > 0) {
-            // Manual mode with uploaded image
+            // Manual mode with uploaded image — resolve vision model separately
+            const visionModel = await getModelForTask('vision', req.user._id);
             result = await geminiService.generateArticleWithImage({
                 topic,
                 purpose: purposeForPrompt,
@@ -124,13 +125,14 @@ exports.generateArticle = async (req, res) => {
                 baseTitle,
                 baseContent,
                 regenerateInstruction,
-                modelName: textModel
+                visionModelName: visionModel
             });
             // Keep the user's uploaded image
             result.imageUrl = normalizedImageUrls[0];
             result.imageUrls = normalizedImageUrls;
         } else if (mode === 'ai_image' && normalizedImageUrls.length > 0) {
-            // AI Image mode with pre-generated image
+            // AI Image mode with pre-generated image — resolve vision model for image analysis
+            const visionModel = await getModelForTask('vision', req.user._id);
             result = await geminiService.generateArticleWithImage({
                 topic,
                 purpose: purposeForPrompt,
@@ -143,13 +145,14 @@ exports.generateArticle = async (req, res) => {
                 baseTitle,
                 baseContent,
                 regenerateInstruction,
-                modelName: textModel
+                visionModelName: visionModel
             });
             // Keep pre-generated image URL
             result.imageUrl = normalizedImageUrls[0];
             result.imageUrls = normalizedImageUrls;
         } else if (mode === 'ai_image') {
-            // AI Image mode - fallback to old behavior
+            // AI Image mode - resolve imageGen model separately for image generation step
+            const imageGenModel = await getModelForTask('imageGen', req.user._id);
             result = await geminiService.generateArticleWithAIImage({
                 topic,
                 purpose: purposeForPrompt,
@@ -161,7 +164,7 @@ exports.generateArticle = async (req, res) => {
                 baseTitle,
                 baseContent,
                 regenerateInstruction,
-                modelName: textModel
+                modelName: imageGenModel
             });
         } else {
             // Default text-only generation

@@ -111,8 +111,8 @@ const MODEL_RECOMMENDATIONS = {
 // Default models cho mỗi task type
 const DEFAULT_MODELS = {
     text: 'gemini-2.5-flash',
-    vision: 'gemini-2.0-flash',
-    imageGen: 'gemini-2.0-flash-exp-image-generation'
+    vision: 'gemini-2.5-flash',
+    imageGen: 'gemini-3-pro-image-preview'
 };
 
 /**

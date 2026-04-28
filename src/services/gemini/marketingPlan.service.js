@@ -280,7 +280,7 @@ function parseMonthlyStrategyResponse(responseText, input) {
  * @param {string} modelName - Gemini model name
  * @returns {Promise<Array>} Generated posts array
  */
-async function generateMarketingPlan(input, brandContext = null, modelName = 'gemini-2.0-flash') {
+async function generateMarketingPlan(input, brandContext = null, modelName = null) {
     try {
         // Build prompt
         const basePrompt = buildMarketingPlanPrompt(input);
@@ -336,7 +336,7 @@ async function generateMarketingPlan(input, brandContext = null, modelName = 'ge
  * @param {string} modelName
  * @returns {Promise<Object>}
  */
-async function generateMonthlyStrategy(input, brandContext = null, modelName = 'gemini-2.0-flash') {
+async function generateMonthlyStrategy(input, brandContext = null, modelName = null) {
     try {
         const basePrompt = buildMonthlyStrategyPrompt(input);
         const finalPrompt = injectBrandContextToPrompt(basePrompt, brandContext);

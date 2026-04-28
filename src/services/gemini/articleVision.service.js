@@ -46,7 +46,7 @@ const MIME_TYPES = {
  * @param {string|null} params.baseTitle - Optional base title for regeneration
  * @param {string|null} params.baseContent - Optional base content for regeneration
  * @param {string|null} params.regenerateInstruction - Optional regenerate instruction
- * @param {string|null} params.modelName - Optional model name override
+ * @param {string|null} params.visionModelName - Optional vision model name override (from user DB settings)
  * @returns {Promise<Object>} Generated article
  */
 async function generateArticleWithImage({
@@ -61,9 +61,9 @@ async function generateArticleWithImage({
     baseTitle = null,
     baseContent = null,
     regenerateInstruction = null,
-    modelName = null
+    visionModelName = null
 }) {
-    const model = getModel('VISION', modelName);
+    const model = getModel('VISION', visionModelName);
     const normalizedWritingStyle = WRITING_STYLE_DIRECTIVES[writingStyle] ? writingStyle : 'balanced';
     const normalizedStorytellingDepth = STORYTELLING_DEPTH_GUIDANCE[storytellingDepth] ? storytellingDepth : 'medium';
 
@@ -92,7 +92,7 @@ async function generateArticleWithImage({
             baseTitle,
             baseContent,
             regenerateInstruction,
-            modelName
+            modelName: visionModelName
         });
     }
 
@@ -170,7 +170,7 @@ Chỉ trả về JSON, không có text thêm.`;
         tool: 'article',
         step: 'prompt-built',
         data: {
-            modelName,
+            visionModelName,
             topic,
             purpose,
             wordCount,
@@ -199,7 +199,7 @@ Chỉ trả về JSON, không có text thêm.`;
             tool: 'article',
             step: 'ai-response',
             data: {
-                modelName,
+                visionModelName,
                 responsePreview: text
             }
         });
@@ -226,7 +226,7 @@ Chỉ trả về JSON, không có text thêm.`;
             tool: 'article',
             step: 'ai-response-error',
             data: {
-                modelName,
+                visionModelName,
                 message: error?.message,
                 stack: error?.stack
             }

@@ -135,11 +135,11 @@ const AISettingsSchema = new mongoose.Schema({
         },
         visionModel: {
             type: String,
-            default: 'gemini-2.0-flash'
+            default: 'gemini-2.5-flash'
         },
         imageGenModel: {
             type: String,
-            default: 'gemini-2.0-flash-exp-image-generation'
+            default: 'gemini-3-pro-image-preview'
         }
     }
 }, {

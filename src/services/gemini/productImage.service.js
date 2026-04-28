@@ -984,16 +984,17 @@ ${sanitizedBrandContext || '(none)'}`,
  * a unified composition blueprint.
  *
  * @param {string[]} imagePaths - Array of file paths (max 5)
+ * @param {string|null} visionModelName - Optional model name override (from user DB settings)
  * @returns {Promise<Object>} Scene elements analysis with composition blueprint
  */
-async function analyzeSceneElements(imagePaths) {
+async function analyzeSceneElements(imagePaths, visionModelName = null) {
     if (!Array.isArray(imagePaths) || imagePaths.length === 0) {
         throw new Error('At least one image path is required');
     }
 
     // Single image: fall back to product analysis wrapped in scene-elements format
     if (imagePaths.length === 1) {
-        const analysis = await analyzeProductImage(imagePaths[0]);
+        const analysis = await analyzeProductImage(imagePaths[0], visionModelName);
         return {
             elements: [{
                 index: 0,
@@ -1015,7 +1016,7 @@ async function analyzeSceneElements(imagePaths) {
         throw new Error('No valid image files found');
     }
 
-    const model = getModel('VISION');
+    const model = getModel('VISION', visionModelName);
     const imageParts = validPaths.map(imgPath => ({
         inlineData: {
             mimeType: getMimeTypeFromPath(imgPath),
@@ -1111,7 +1112,7 @@ Only return valid JSON.`;
             service: 'product-image',
             responsePreview: text.slice(0, 500)
         });
-        const fallbackAnalysis = await analyzeProductImage(validPaths[0]);
+        const fallbackAnalysis = await analyzeProductImage(validPaths[0], visionModelName);
         return {
             elements: validPaths.map((p, i) => ({
                 index: i,
@@ -1140,10 +1141,11 @@ Only return valid JSON.`;
 /**
  * Analyze product image using Gemini Vision
  * @param {string} imagePath - Path to the product image
+ * @param {string|null} visionModelName - Optional model name override (from user DB settings)
  * @returns {Promise<Object>} Product analysis result
  */
-async function analyzeProductImage(imagePath) {
-    const model = getModel('VISION');
+async function analyzeProductImage(imagePath, visionModelName = null) {
+    const model = getModel('VISION', visionModelName);
     
     // Read image file
     const imageBuffer = fs.readFileSync(imagePath);
@@ -1626,7 +1628,8 @@ async function generateProductWithBackground(params) {
         outputSize,
         additionalNotes,
         brandContext,
-        modelName
+        modelName,
+        visionModelName
     } = params;
 
     const isMultiRef = Array.isArray(additionalRefImagePaths) && additionalRefImagePaths.length > 0;
@@ -1664,12 +1667,12 @@ async function generateProductWithBackground(params) {
         let sceneElements = null;
 
         if (isMultiRef) {
-            sceneElements = await analyzeSceneElements(allImagePaths);
+            sceneElements = await analyzeSceneElements(allImagePaths, visionModelName);
             // Extract product analysis from scene elements for compatibility with existing intent/identity code
             const productEl = sceneElements.elements?.find((_, i) => i === sceneElements.primaryProductIndex);
-            productAnalysis = productEl?.analysis || await analyzeProductImage(originalImagePath);
+            productAnalysis = productEl?.analysis || await analyzeProductImage(originalImagePath, visionModelName);
         } else {
-            productAnalysis = await analyzeProductImage(originalImagePath);
+            productAnalysis = await analyzeProductImage(originalImagePath, visionModelName);
         }
 
         const intentSignals = buildIntentSignals({
