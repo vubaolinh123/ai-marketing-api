@@ -24,6 +24,84 @@ const {
 // Upload directory for AI-generated product images
 const PRODUCT_IMAGES_DIR = path.join(process.cwd(), 'uploads', 'images', 'product-images');
 
+// ---------------------------------------------------------------------------
+// Rate-limit helpers
+// ---------------------------------------------------------------------------
+
+/** Promisified sleep */
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Detect whether an error is a Gemini 429 / quota-exhausted response.
+ * Gemini SDK surfaces this as error.status === 429, or embeds the code in
+ * the message string.
+ */
+function isRateLimitError(error) {
+    if (!error) return false;
+    if (error.isRateLimit) return true;
+    const status = Number(error.status || error.statusCode || 0);
+    if (status === 429) return true;
+    const msg = String(error.message || '');
+    return msg.includes('429') || /Too Many Requests/i.test(msg) || /Resource exhausted/i.test(msg);
+}
+
+// ---------------------------------------------------------------------------
+// Rate-limited semaphore for IMAGE_GEN calls
+//
+// Tuning strategy: Gemini free-tier IMAGE_GEN limit is ~10 RPM.
+// Allow 2 concurrent calls + enforce min spacing between starts so we stay
+// comfortably under the quota without serialising all angles.
+//
+// Env-var overrides (no restart needed after .env change):
+//   GEMINI_IMAGE_GEN_CONCURRENCY       – max in-flight calls (default 2)
+//   GEMINI_IMAGE_GEN_MIN_SPACING_MS    – min ms between call starts (default 1500)
+//   GEMINI_RETRY_BASE_DELAY_MS         – base delay for 429 backoff (default 1500)
+// ---------------------------------------------------------------------------
+const IMAGE_GEN_CONCURRENCY = Math.max(1, Number(process.env.GEMINI_IMAGE_GEN_CONCURRENCY) || 2);
+const IMAGE_GEN_MIN_SPACING_MS = Math.max(0, Number(process.env.GEMINI_IMAGE_GEN_MIN_SPACING_MS) || 1500);
+const GEMINI_RETRY_BASE_DELAY_MS = Math.max(500, Number(process.env.GEMINI_RETRY_BASE_DELAY_MS) || 1500);
+
+let _activeImageGenCount = 0;
+let _lastImageGenStart = 0;
+const _imageGenWaiters = [];
+
+/**
+ * Rate-limited semaphore wrapper for IMAGE_GEN calls.
+ *
+ * - Allows up to IMAGE_GEN_CONCURRENCY calls in-flight at once.
+ * - Enforces at least IMAGE_GEN_MIN_SPACING_MS between the *start* of
+ *   consecutive calls so we don't burst the RPM quota even under concurrency.
+ * - When a slot becomes free the next waiter is woken up (FIFO).
+ */
+async function withImageGenQueue(fn) {
+    // Wait for a free slot
+    while (_activeImageGenCount >= IMAGE_GEN_CONCURRENCY) {
+        await new Promise((resolve) => _imageGenWaiters.push(resolve));
+    }
+
+    // Enforce minimum spacing between starts to stay under RPM limit
+    const now = Date.now();
+    const sinceLast = now - _lastImageGenStart;
+    if (sinceLast < IMAGE_GEN_MIN_SPACING_MS) {
+        await sleep(IMAGE_GEN_MIN_SPACING_MS - sinceLast);
+    }
+
+    _lastImageGenStart = Date.now();
+    _activeImageGenCount++;
+
+    try {
+        return await fn();
+    } finally {
+        _activeImageGenCount--;
+        // Wake the next waiter in FIFO order
+        const next = _imageGenWaiters.shift();
+        if (next) next();
+    }
+}
+// ---------------------------------------------------------------------------
+
 // Ensure directory exists
 if (!fs.existsSync(PRODUCT_IMAGES_DIR)) {
     fs.mkdirSync(PRODUCT_IMAGES_DIR, { recursive: true });
@@ -1710,7 +1788,9 @@ async function generateProductWithBackground(params) {
                         ? `${additionalNotes}\n\nAngle requirement: ${cameraAngle} - ${CAMERA_ANGLE_PROMPTS[cameraAngle] || ''}`
                         : `Angle requirement: ${cameraAngle} - ${CAMERA_ANGLE_PROMPTS[cameraAngle] || ''}`;
 
-                    successUrl = await generateSingleAngleImage({
+                    // Wrap each IMAGE_GEN call in the module-level queue so only
+                    // one call is in-flight at a time (prevents quota burst).
+                    successUrl = await withImageGenQueue(() => generateSingleAngleImage({
                         originalImagePath,
                         additionalRefImagePaths: isMultiRef ? additionalRefImagePaths : [],
                         sceneElements,
@@ -1734,12 +1814,30 @@ async function generateProductWithBackground(params) {
                         isAnchor,
                         retryLevel: attempt,
                         modelName
-                    });
+                    }));
 
                     errorMessage = '';
                     break;
                 } catch (error) {
                     errorMessage = error.message || 'Lỗi khi tạo ảnh';
+
+                    if (attempt < 2) {
+                        if (isRateLimitError(error)) {
+                            // 429: exponential backoff (base, base*2) + up to 500ms jitter
+                            // Base delay from env GEMINI_RETRY_BASE_DELAY_MS (default 1500ms).
+                            // Proxy-level retry in gemini.config already handles 1 quick retry,
+                            // so service-level delays are kept shorter to avoid compound waits.
+                            const jitter = Math.floor(Math.random() * 500);
+                            const delayMs = GEMINI_RETRY_BASE_DELAY_MS * Math.pow(2, attempt) + jitter;
+                            logError(`[productImage] Retry attempt ${attempt + 1} after ${delayMs}ms (429 detected)`, {
+                                cameraAngle,
+                                attempt,
+                                delayMs
+                            });
+                            await sleep(delayMs);
+                        }
+                        // Non-429 errors: continue immediately (existing behaviour)
+                    }
                 }
             }
 

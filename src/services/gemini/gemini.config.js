@@ -184,6 +184,44 @@ function createLoggedModel(model, { modelName, type }) {
                         ...requestMeta
                     });
 
+                    // Tag rate-limit errors so callers can distinguish them
+                    const isRateLimit = status === 429 ||
+                        String(error?.message || '').includes('429') ||
+                        /Too Many Requests/i.test(error?.message || '') ||
+                        /Resource exhausted/i.test(error?.message || '');
+
+                    if (isRateLimit) {
+                        error.isRateLimit = true;
+                    }
+
+                    // Centralized 429 backoff: 1 quick retry (1.5s) before re-throwing.
+                    // Kept to 1 attempt only — the service layer (productImage.service.js)
+                    // handles deeper retries with its own backoff. Two layers compounding
+                    // would waste too much time (up to 9s total per failed call).
+                    // Base delay configurable via GEMINI_RETRY_BASE_DELAY_MS (default 1500ms).
+                    if (isRateLimit) {
+                        const rlDelay = Math.max(500, Number(process.env.GEMINI_RETRY_BASE_DELAY_MS) || 1500);
+                        logWarn(`[gemini.config] 429 rate-limit detected, backing off ${rlDelay}ms before single retry`, {
+                            modelName,
+                            rlDelay
+                        });
+                        await new Promise((resolve) => setTimeout(resolve, rlDelay));
+                        try {
+                            const retryResponse = await raw.apply(target, args);
+                            return retryResponse;
+                        } catch (retryError) {
+                            const retryStatus = getErrorCode(retryError);
+                            const retryIsRateLimit = retryStatus === 429 ||
+                                String(retryError?.message || '').includes('429') ||
+                                /Too Many Requests/i.test(retryError?.message || '') ||
+                                /Resource exhausted/i.test(retryError?.message || '');
+                            if (retryIsRateLimit) {
+                                retryError.isRateLimit = true;
+                            }
+                            throw retryError;
+                        }
+                    }
+
                     throw error;
                 }
             };

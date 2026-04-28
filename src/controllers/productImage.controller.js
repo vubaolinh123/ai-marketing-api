@@ -370,6 +370,18 @@ exports.generateProductImage = async (req, res) => {
             endpoint: 'POST /api/product-images/generate',
             error
         });
+
+        const isRateLimit = error.isRateLimit ||
+            String(error.message || '').includes('429') ||
+            /Resource exhausted/i.test(error.message || '');
+
+        if (isRateLimit) {
+            return res.status(429).json({
+                success: false,
+                message: 'Gemini API quota tạm thời hết, vui lòng thử lại sau 30s.'
+            });
+        }
+
         res.status(500).json({
             success: false,
             message: error.message || 'Lỗi khi tạo ảnh AI'
@@ -602,6 +614,18 @@ exports.regenerateProductImage = async (req, res) => {
             endpoint: 'POST /api/product-images/:id/regenerate',
             error
         });
+
+        const isRateLimit = error.isRateLimit ||
+            String(error.message || '').includes('429') ||
+            /Resource exhausted/i.test(error.message || '');
+
+        if (isRateLimit) {
+            return res.status(429).json({
+                success: false,
+                message: 'Gemini API quota tạm thời hết, vui lòng thử lại sau 30s.'
+            });
+        }
+
         res.status(500).json({
             success: false,
             message: error.message || 'Lỗi khi tạo lại ảnh AI'
